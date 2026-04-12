@@ -2,6 +2,10 @@
 *.obj
 *.pdb
 *.ilk
+*.so
+*.dll
+
 .vs/
 .vscode/
-/debug/
+/src/debug/
+/src/engine/dummy_web.log
