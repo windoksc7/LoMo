@@ -2,6 +2,10 @@ name: Performance Benchmark
 
 on: [push] # 코드를 올릴 때마다 자동 실행
 
+defaults:
+  run:
+    working-directory: ./src/engine # 모든 명령어를 이 폴더 안에서 실행해라!
+
 jobs:
   benchmark-windows:
     runs-on: windows-latest # Windows 환경 (cl 컴파일러 사용 가능)
@@ -14,7 +18,7 @@ jobs:
       - name: Build Generator and Engine
         run: |
           cl /O2 log_gen.c /Fe:log_gen.exe
-          cl /O2 /arch:AVX2 scanner_simd.c /Fe:scanner.exe
+          cl /O2 /arch:AVX2 scanner.c /Fe:scanner.exe
 
       - name: Generate 1GB Dummy Log
         run: ./log_gen.exe
