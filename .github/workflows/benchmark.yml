@@ -28,12 +28,17 @@ jobs:
           cl /O2 /arch:AVX2 dummy.c /Fe:log_gen.exe
           cl /O2 /arch:AVX2 scanner_core.c /Fe:scanner.exe
 
-      # Linux/macOS 환경 설정 및 빌드
-      - name: Build (Linux/macOS)
-        if: matrix.os != 'windows-latest'
+      - name: Build (Linux)
+        if: matrix.os == 'ubuntu-latest'
         run: |
           gcc -O3 dummy.c -o log_gen
-          gcc -O3 -mavx2 scanner_core.c -o scanner
+          gcc -O3 -mavx2 scanner.c -o scanner
+
+      - name: Build (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          gcc -O3 dummy.c -o log_gen
+          gcc -O3 scanner.c -o scanner
 
       # 공통 실행 단계
       - name: Run Benchmark
