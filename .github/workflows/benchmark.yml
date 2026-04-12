@@ -18,7 +18,7 @@ jobs:
       - name: Build Generator and Engine
         run: |
           cl /O2 dummy.c /Fe:log_gen.exe
-          cl /O2 /arch:AVX2 scanner.c /Fe:scanner.exe
+          cl /O2 /arch:AVX2 scanner_core.c /Fe:scanner.exe
 
       - name: Generate 1GB Dummy Log
         run: ./log_gen.exe
@@ -37,7 +37,7 @@ jobs:
       - name: Build with GCC
         run: |
           gcc -O3 log_gen.c -o log_gen
-          gcc -O3 -mavx2 scanner_simd.c -o scanner
+          gcc -O3 -mavx2 scanner_core.c -o scanner
 
       - name: Generate 1GB Dummy Log
         run: ./log_gen
