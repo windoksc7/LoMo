@@ -1,59 +1,51 @@
+#define _CRT_SECURE_NO_WARNINGS
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
 
-#define TARGET_SIZE_GB 1.0
-#define BUFFER_SIZE (1024 * 1024) // 1MB 버퍼
+void generate_fake_logs(const char* filename, long long target_size_gb) {
+    FILE* fp = fopen(filename, "w");
+    if (!fp) return;
 
-int main() {
-    const char *filename = "dummy_web.log";
-    FILE *fp = fopen(filename, "w");
-    if (!fp) {
-        perror("파일 열기 실패");
-        return 1;
-    }
+    const char* ips[] = {"192.168.1.10", "172.16.254.1", "10.0.0.15", "210.15.22.4", "1.23.45.67"};
+    const char* methods[] = {"GET", "POST"};
+    const char* paths[] = {"/index.html", "/shop/item?id=1", "/contact", "/api/v1/user", "/static/css/main.css"};
+    const char* status[] = {"200", "200", "200", "301", "404", "500"}; // 200 비중을 높게
+    
+    // 수상한 데이터 (공격 패턴)
+    const char* malicious_ips[] = {"13.37.13.37", "66.66.66.66"};
+    const char* malicious_paths[] = {"/admin/config.php", "/.env", "/wp-login.php", "/etc/passwd"};
 
-    const char *methods[] = {"GET", "POST", "PUT", "DELETE"};
-    const char *paths[] = {"/index.html", "/api/login", "/static/css/main.css", "/api/v1/user/profile", "/images/logo.png"};
-    const int status_codes[] = {200, 201, 301, 404, 500, 502};
+    long long current_size = 0;
+    long long target_size = target_size_gb * 1024LL * 1024LL * 1024LL;
+    int line_count = 0;
 
-    char *buffer = malloc(BUFFER_SIZE);
-    long long total_bytes = 0;
-    long long target_bytes = (long long)(TARGET_SIZE_GB * 1024 * 1024 * 1024);
+    printf("Generating %lldGB of realistic logs...\n", target_size_gb);
 
-    srand(time(NULL));
+    while (current_size < target_size) {
+        char buffer[256];
+        int len;
 
-    printf("1GB 로그 생성 시작: %s...\n", filename);
-
-    int buf_pos = 0;
-    while (total_bytes < target_bytes) {
-        // 더미 로그 라인 생성 (Nginx Common Log Format 스타일)
-        int len = sprintf(buffer + buf_pos, 
-            "192.168.0.%d - - [12/Apr/2026:22:55:41 +0900] \"%s %s HTTP/1.1\" %d %d\n",
-            rand() % 255, 
-            methods[rand() % 4], 
-            paths[rand() % 5], 
-            status_codes[rand() % 6], 
-            rand() % 5000);
-
-        buf_pos += len;
-        total_bytes += len;
-
-        // 버퍼가 가득 차면 한 번에 쓰기 (I/O 최적화)
-        if (buf_pos > BUFFER_SIZE - 512) {
-            fwrite(buffer, 1, buf_pos, fp);
-            buf_pos = 0;
-            // 진행률 표시
-            printf("\r생성 중... %.2f%%", (double)total_bytes / target_bytes * 100);
-            fflush(stdout);
+        // 5,000줄마다 하나씩 수상한 접근 생성
+        if (line_count % 5000 == 0) {
+            len = sprintf(buffer, "[2026-04-13 12:00:00] %s %s %s 404\n", 
+                          malicious_ips[rand() % 2], methods[rand() % 2], malicious_paths[rand() % 4]);
+        } else {
+            len = sprintf(buffer, "[2026-04-13 12:00:00] %s %s %s %s\n", 
+                          ips[rand() % 5], methods[rand() % 2], paths[rand() % 5], status[rand() % 6]);
         }
-    }
 
-    if (buf_pos > 0) fwrite(buffer, 1, buf_pos, fp);
+        fputs(buffer, fp);
+        current_size += len;
+        line_count++;
+    }
 
     fclose(fp);
-    free(buffer);
-    printf("\n완료! 생성된 파일 크기: %.2f GB\n", (double)total_bytes / (1024 * 1024 * 1024));
+    printf("Complete! Total lines: %d\n", line_count);
+}
 
+int main() {
+    srand((unsigned int)time(NULL));
+    generate_fake_logs("dummy_web.log", 1); // 1GB 생성
     return 0;
 }
