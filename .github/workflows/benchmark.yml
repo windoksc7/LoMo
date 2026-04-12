@@ -32,13 +32,13 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           gcc -O3 dummy.c -o log_gen
-          gcc -O3 -mavx2 scanner.c -o scanner
+          gcc -O3 -mavx2 scanner_core.c -o scanner
 
       - name: Build (macOS)
         if: matrix.os == 'macos-latest'
         run: |
           gcc -O3 dummy.c -o log_gen
-          gcc -O3 scanner.c -o scanner
+          gcc -O3 scanner_core.c -o scanner
 
       # 공통 실행 단계
       - name: Run Benchmark
