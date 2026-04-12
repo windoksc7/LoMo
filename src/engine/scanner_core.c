@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <time.h>
+#include <inttypes.h>
 
 #if defined(__x86_64__) || defined(_M_X64)
     #include <immintrin.h> // Intel/AMD용 AVX2
@@ -11,19 +12,13 @@
 #if defined(_WIN32)
     // Windows: CreateFileMapping, MapViewOfFile
     #include <windows.h>
-
-#elif defined(__apple__) || defined(__linux__)
+    #include <intrin.h>
+#else
     // macOS & Linux: mmap, POSIX 표준
     #include <sys/mman.h>
     #include <sys/stat.h>
     #include <fcntl.h>
     #include <unistd.h>
-#endif
-
-#ifdef _WIN32
-    #include <intrin.h>
-#else
-    // GCC/Clang에서 MSVC의 __popcnt와 동일한 기능을 하도록 정의
     #define __popcnt __builtin_popcount
 #endif
 
@@ -90,8 +85,7 @@ void scan_log_mmap(const char* filename) {
     uint64_t total_found = core_scanner_logic(data, fileSize);
     double elapsed = (double)(clock() - start) / CLOCKS_PER_SEC;
 
-    printf("Result: %llu found in %.4f sec (%.2f GB/s)\n", total_found, elapsed, (fileSize/1024.0/1024.0/1024.0)/elapsed);
-
+    printf("Result: %" PRIu64 " found in %.4f sec (%.2f GB/s)\n", total_found, elapsed, (fileSize/1024.0/1024.0/1024.0)/elapsed);
 #if defined(_WIN32)
     UnmapViewOfFile(data); CloseHandle(hMapping); CloseHandle(hFile);
 #else
