@@ -1,73 +1,72 @@
-#include <windows.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <time.h>
-#include <immintrin.h> // SIMD(AVX2) 내장 함수 헤더
+#include <immintrin.h>
 
-void scan_log_mmap(const char* filename) {
-    // 1. 파일 열기
-    HANDLE hFile = CreateFile(filename, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (hFile == INVALID_HANDLE_VALUE) { printf("file open fail\n"); return; }
+#if defined(_WIN32)
+    // Windows: CreateFileMapping, MapViewOfFile
+    #include <windows.h>
+#elif defined(__apple__) || defined(__linux__)
+    // macOS & Linux: mmap, POSIX 표준
+    #include <sys/mman.h>
+    #include <sys/stat.h>
+    #include <fcntl.h>
+    #include <unistd.h>
+#endif
 
-    // 2. 파일 크기 확인
-    LARGE_INTEGER fileSize;
-    GetFileSizeEx(hFile, &fileSize);
-
-    // 3. 파일 매핑 객체 생성 (mmap 준비)
-    HANDLE hMapping = CreateFileMapping(hFile, NULL, PAGE_READONLY, 0, 0, NULL);
-    if (!hMapping) { CloseHandle(hFile); return; }
-
-    // 4. 메모리 주소 공간에 파일 매핑
-    const char* data = (const char*)MapViewOfFile(hMapping, FILE_MAP_READ, 0, 0, 0);
-    if (!data) { CloseHandle(hMapping); CloseHandle(hFile); return; }
-
-    printf("scan start (size: %.2f GB)...\n", (double)fileSize.QuadPart / (1024*1024*1024));
-
-    // 5. 초고속 스캔 로직 (여기가 ksc님의 기술적 승부처)
-    clock_t start = clock();
+// [공통 함수] OS와 상관없이 오직 '속도'에만 집중하는 스캔 로직
+uint64_t core_scanner_logic(const char* data, size_t size) {
     uint64_t count = 0;
     const char* ptr = data;
-    const char* end = data + fileSize.QuadPart;
+    const char* end = data + size;
 
-    // 32바이트씩 묶어서 처리할 바구니(Vector) 생성
-    // '[' 문자(0x5B)로 가득 채운 256비트(32바이트) 레지스터
+    // AVX2 SIMD 로직 (모든 x86_64 OS 공통)
     __m256i target = _mm256_set1_epi8('[');
-
     while (ptr <= end - 32) {
-        // 1. 메모리에서 32바이트를 한 번에 로드
         __m256i chunk = _mm256_loadu_si256((const __m256i*)ptr);
-
-        // 2. target('[')과 chunk(데이터)를 한 번에 비교 (일치하면 0xFF, 아니면 0x00)
         __m256i comparison = _mm256_cmpeq_epi8(chunk, target);
-
-        // 3. 비교 결과(비트마스크)를 32비트 정수로 추출
         int mask = _mm256_movemask_epi8(comparison);
-
-        // 4. mask에서 1로 세팅된 비트의 개수(일치하는 글자 수)를 카운트
-        if (mask != 0) {
-            count += __popcnt(mask); // 정수 내 비트 개수를 세는 하드웨어 명령
-        }
-
-        ptr += 32; // 32바이트 점프!
+        if (mask != 0) count += __popcnt(mask);
+        ptr += 32;
     }
 
-    // 남은 자투리 데이터 처리 (32바이트 미만)
+    // 자투리 처리
     while (ptr < end) {
         if (*ptr == '[') count++;
         ptr++;
     }
+    return count;
+}
 
-    clock_t end_time = clock();
-    double elapsed = (double)(end_time - start) / CLOCKS_PER_SEC;
+void scan_log_mmap(const char* filename) {
+    const char* data = NULL;
+    size_t fileSize = 0;
 
-    // 6. 결과 출력 및 해제
-    printf("scan complete! found '[' count: %llu\n", count);
-    printf("time: %.4f초\n", elapsed);
-    printf("speed: %.2f GB/s\n", ((double)fileSize.QuadPart / (1024*1024*1024)) / elapsed);
+#if defined(_WIN32)
+    // Windows mmap
+    HANDLE hFile = CreateFile(filename, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    LARGE_INTEGER li; GetFileSizeEx(hFile, &li); fileSize = li.QuadPart;
+    HANDLE hMapping = CreateFileMapping(hFile, NULL, PAGE_READONLY, 0, 0, NULL);
+    data = (const char*)MapViewOfFile(hMapping, FILE_MAP_READ, 0, 0, 0);
+#else
+    // POSIX (Linux/macOS) mmap
+    int fd = open(filename, O_RDONLY);
+    struct stat st; fstat(fd, &st); fileSize = st.st_size;
+    data = (const char*)mmap(NULL, fileSize, PROT_READ, MAP_PRIVATE, fd, 0);
+#endif
 
-    UnmapViewOfFile(data);
-    CloseHandle(hMapping);
-    CloseHandle(hFile);
+    // 공통 함수 호출
+    clock_t start = clock();
+    uint64_t total_found = core_scanner_logic(data, fileSize);
+    double elapsed = (double)(clock() - start) / CLOCKS_PER_SEC;
+
+    printf("Result: %llu found in %.4f sec (%.2f GB/s)\n", total_found, elapsed, (fileSize/1024.0/1024.0/1024.0)/elapsed);
+
+#if defined(_WIN32)
+    UnmapViewOfFile(data); CloseHandle(hMapping); CloseHandle(hFile);
+#else
+    munmap((void*)data, fileSize); close(fd);
+#endif
 }
 
 int main() {
