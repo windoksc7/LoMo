@@ -25,143 +25,153 @@
     #define __popcnt __builtin_popcount
 #endif
 
-// --- [공통 스캔 로직] ---
-// 특정 패턴(IP, 경로 등)이 로그에 몇 번 등장하는지 0.1초 만에 찾아냅니다.
-uint64_t count_pattern(const char* data, size_t size, const char* pattern) {
-    uint64_t count = 0;
-    size_t pattern_len = strlen(pattern);
-    if (pattern_len < 2) return count_pattern(data, size, pattern); // 1글자면 기존 방식
+typedef struct {
+    const char* data;
+    size_t size;
+#if defined(_WIN32)
+    HANDLE hFile;
+    HANDLE hMapping;
+#else
+    int fd;
+#endif
+} MappedFile;
 
-    const char* ptr = data;
-    const char* end = data + size;
-    
-    // 첫 두 글자를 타겟으로 설정 (예: '1', '3')
-    char c1 = pattern[0];
-    char c2 = pattern[1];
+void unmap_file(MappedFile* mf) {
+    if (!mf) return;
 
-#if defined(__x86_64__) || defined(_M_X64)
-    __m256i target1 = _mm256_set1_epi8(c1);
-    __m256i target2 = _mm256_set1_epi8(c2);
-    
-    while (ptr <= end - 33) { // 2바이트 확인을 위해 33바이트 여유
-        __m256i chunk1 = _mm256_loadu_si256((const __m256i*)ptr);
-        __m256i chunk2 = _mm256_loadu_si256((const __m256i*)(ptr + 1)); // 한 칸 밀어서 로드
-        
-        // chunk1에는 '1'이 있고, 동시에 chunk2에는 '3'이 있는 위치 찾기
-        __m256i cmp1 = _mm256_cmpeq_epi8(chunk1, target1);
-        __m256i cmp2 = _mm256_cmpeq_epi8(chunk2, target2);
-        
-        // 두 조건이 모두 만족하는 지점만 마스크로 생성
-        int mask = _mm256_movemask_epi8(_mm256_and_si256(cmp1, cmp2));
-
-        if (mask != 0) {
-            for (int i = 0; i < 32; i++) {
-                if ((mask >> i) & 1) {
-                    // 이제 진짜 '13'으로 시작하는 지점만 memcmp 실행!
-                    if (memcmp(ptr + i, pattern, pattern_len) == 0) {
-                        count++;
-                    }
-                }
-            }
-        }
-        ptr += 32;
+#if defined(_WIN32)
+    if (mf->data) UnmapViewOfFile(mf->data);
+    if (mf->hMapping) CloseHandle(mf->hMapping);
+    if (mf->hFile) CloseHandle(mf->hFile);
+#else
+    // 리눅스/맥: 구조체에 담아뒀던 mf->fd를 여기서 사용합니다!
+    if (mf->data && mf->data != MAP_FAILED) {
+        munmap(mf->data, mf->size); 
+    }
+    if (mf->fd >= 0) {
+        close(mf->fd); // 드디어 fd를 닫습니다.
     }
 #endif
-
-    // 남은 부분 처리
-    while (ptr < end - pattern_len) {
-        if (*ptr == c1 && memcmp(ptr, pattern, pattern_len) == 0) {
-            count++;
-        }
-        ptr++;
-    }
-    return count;
+    free(mf); // 마지막으로 구조체 자체를 메모리에서 해제
 }
 
-void run_analysis(const char* filename) {
-    const char* data = NULL;
-    size_t fileSize = 0;
+// [공통 함수] 파일을 메모리에 매핑하고 정보를 구조체에 담아 반환
+MappedFile* map_file_to_memory(const char* filename) {
+    MappedFile* mf = (MappedFile*)malloc(sizeof(MappedFile));
+    if (!mf) return NULL;
 
-    // 1. 먼저 파일을 열고 data와 fileSize를 가져옵니다.
 #if defined(_WIN32)
-    HANDLE hFile = CreateFileA(filename, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (hFile == INVALID_HANDLE_VALUE) { printf("cannot find file.\n"); return; }
-    LARGE_INTEGER li; GetFileSizeEx(hFile, &li); fileSize = (size_t)li.QuadPart;
-    HANDLE hMapping = CreateFileMapping(hFile, NULL, PAGE_READONLY, 0, 0, NULL);
-    data = (const char*)MapViewOfFile(hMapping, FILE_MAP_READ, 0, 0, 0);
+    mf->hFile = CreateFileA(filename, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (mf->hFile == INVALID_HANDLE_VALUE) { free(mf); return NULL; }
+    
+    LARGE_INTEGER li;
+    GetFileSizeEx(mf->hFile, &li);
+    mf->size = (size_t)li.QuadPart;
+    
+    mf->hMapping = CreateFileMapping(mf->hFile, NULL, PAGE_READONLY, 0, 0, NULL);
+    mf->data = (const char*)MapViewOfFile(mf->hMapping, FILE_MAP_READ, 0, 0, 0);
 #else
-    int fd = open(filename, O_RDONLY);
-    if (fd == -1) { printf("cannot find file.\n"); return; }
-    struct stat st; fstat(fd, &st); fileSize = (size_t)st.st_size;
-    data = (const char*)mmap(NULL, fileSize, PROT_READ, MAP_PRIVATE, fd, 0);
+    mf->fd = open(filename, O_RDONLY);
+    if (mf->fd == -1) { free(mf); return NULL; }
+    
+    struct stat st;
+    fstat(mf->fd, &st);
+    mf->size = (size_t)st.st_size;
+    
+    mf->data = (const char*)mmap(NULL, mf->size, PROT_READ, MAP_PRIVATE, mf->fd, 0);
 #endif
 
-    if (!data) { printf("memory mapping fail!\n"); return; }
+    if (!mf->data) {
+        // 에러 발생 시 정리 로직...
+        return NULL;
+    }
+    return mf;
+}
 
-    // 2. [중요] data와 fileSize가 결정된 '후'에 ptr과 end를 설정합니다.
+
+// --- [OS/CPU별 최적화 필터 함수] ---
+static inline int check_match_32byte(const char* ptr, char c1, char c2) {
+#if defined(__x86_64__) || defined(_M_X64)
+    // 인텔/AMD AVX2 (256비트)
+    __m256i chunk1 = _mm256_loadu_si256((const __m256i*)ptr);
+    __m256i chunk2 = _mm256_loadu_si256((const __m256i*)(ptr + 1));
+    return _mm256_movemask_epi8(_mm256_and_si256(
+        _mm256_cmpeq_epi8(chunk1, _mm256_set1_epi8(c1)),
+        _mm256_cmpeq_epi8(chunk2, _mm256_set1_epi8(c2))
+    ));
+#elif defined(__aarch64__) || defined(_M_ARM64)
+    // Apple Silicon / ARM NEON (128비트)
+    uint8x16_t chunk1 = vld1q_u8((const uint8_t*)ptr);
+    uint8x16_t chunk2 = vld1q_u8((const uint8_t*)(ptr + 1));
+    uint8x16_t cmp = vandq_u8(vceqq_u8(chunk1, vdupq_n_u8(c1)), 
+                              vceqq_u8(chunk2, vdupq_n_u8(c2)));
+    // NEON은 mask가 없으므로 합산이 0보다 크면 일치하는 지점이 있는 것
+    return (vaddvq_u8(cmp) > 0); 
+#else
+    // 가속기가 없는 환경 (일반 C)
+    return (*ptr == c1 && *(ptr+1) == c2);
+#endif
+}
+
+void run_analysis(const char* data, size_t fileSize) {
+    if (!data || fileSize == 0) return; // 방어 코드 추가
+
     const char* ptr = data;
     const char* end = data + fileSize;
 
     printf("--- analysis (file size: %.2f GB) ---\n", (double)fileSize / (1024*1024*1024));
 
     clock_t start = clock();
-    
-    uint64_t hacker_ips = 0;
-    uint64_t admin_hits = 0;
-    uint64_t env_leaks = 0;
+    uint64_t hacker_ips = 0, admin_hits = 0, env_leaks = 0;
 
-    // 3. Single Pass Scan (한 번에 3개 다 찾기)
-    while (ptr <= end - 32) {
-        __m256i chunk = _mm256_loadu_si256((const __m256i*)ptr);
-        __m256i chunk_next = _mm256_loadu_si256((const __m256i*)(ptr + 1));
-
-        // 1. 해커 IP 필터링: '1'과 '3'이 연속되는 지점만!
-        int mask_hacker = _mm256_movemask_epi8(_mm256_and_si256(
-            _mm256_cmpeq_epi8(chunk, _mm256_set1_epi8('1')),
-            _mm256_cmpeq_epi8(chunk_next, _mm256_set1_epi8('3'))
-        ));
-
-        // 2. 경로 필터링: '/'와 'a'가 연속되거나(admin), '/'와 '.'이 연속되는(.env) 지점만!
-        int mask_admin = _mm256_movemask_epi8(_mm256_and_si256(
-            _mm256_cmpeq_epi8(chunk, _mm256_set1_epi8('/')),
-            _mm256_cmpeq_epi8(chunk_next, _mm256_set1_epi8('a'))
-        ));
-        
-        int mask_env = _mm256_movemask_epi8(_mm256_and_si256(
-            _mm256_cmpeq_epi8(chunk, _mm256_set1_epi8('/')),
-            _mm256_cmpeq_epi8(chunk_next, _mm256_set1_epi8('.'))
-        ));
-
-        // 이제 각 마스크가 있을 때만 해당 항목을 체크합니다.
-        if (mask_hacker) { hacker_ips++; }
-        if (mask_admin) { admin_hits++; }
-        if (mask_env) { env_leaks++; }
-
-        ptr += 32;
+    // 3. Single Pass Scan
+    while (ptr <= end - 33) {
+        // 해커 IP 필터링 (13...)
+        if (check_match_32byte(ptr, '1', '3')) {
+            if (memcmp(ptr, "13.37.13.37", 11) == 0) {
+                hacker_ips++;
+                ptr += 10; // 찾은 후 패턴 길이만큼 대략 점프 (성능 최적화)
+            }
+        }
+        // 어드민 페이지 필터링 (/a...)
+        else if (check_match_32byte(ptr, '/', 'a')) {
+            if (memcmp(ptr, "/admin", 6) == 0) {
+                admin_hits++;
+                ptr += 5;
+            }
+        }
+        // 환경변수 필터링 (/. ...)
+        else if (check_match_32byte(ptr, '/', '.')) {
+            if (memcmp(ptr, "/.env", 5) == 0) {
+                env_leaks++;
+                ptr += 4;
+            }
+        }
+        ptr++; // 기본 1바이트 전진 (정확도 보장)
     }
+    
     double elapsed = (double)(clock() - start) / CLOCKS_PER_SEC;
-
-    // --- [Step 3: 결과 출력] ---
     printf("1. hacker IP (13.37.13.37) : %" PRIu64 " count\n", hacker_ips);
     printf("2. admin page open check: %" PRIu64 " count\n", admin_hits);
     printf("3. .env check : %" PRIu64 " count\n", env_leaks);
     printf("------------------------------------------\n");
     printf("time: %.4f sec (speed: %.2f GB/s)\n", elapsed, (fileSize / 1024.0 / 1024.0 / 1024.0) / elapsed);
-
-    // --- [Step 4: 자원 해제] ---
-#if defined(_WIN32)
-    UnmapViewOfFile(data); CloseHandle(hMapping); CloseHandle(hFile);
-#else
-    munmap((void*)data, fileSize); close(fd);
-#endif
 }
 
 int main() {
-    run_analysis("dummy_web.log");
+    MappedFile* logFile = map_file_to_memory("dummy_web.log");
+    if (!logFile) {
+        printf("Log file mapping failed.\n");
+        return 1;
+    }
 
-    printf("enter to closed\n");
+    run_analysis(logFile->data, logFile->size);
+
+    // [수정] unmap_file 하나로 깔끔하게 정리
+    unmap_file(logFile);
+
+    printf("\nPress Enter to exit...");
     rewind(stdin);
-    getchar(); // 사용자 입력이 있을 때까지 대기
-    getchar();
+    getchar(); 
     return 0;
 }
