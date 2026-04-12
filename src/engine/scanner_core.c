@@ -1,8 +1,10 @@
+#define _CRT_SECURE_NO_WARNINGS
 #include <stdio.h>
+#include <stdlib.h>
 #include <stdint.h>
+#include <string.h>
 #include <time.h>
 #include <inttypes.h>
-#include <string.h>
 
 #if defined(__x86_64__) || defined(_M_X64)
     #include <immintrin.h> // Intel/AMD용 AVX2
@@ -16,26 +18,6 @@
     #include <intrin.h>
 #else
     // macOS & Linux: mmap, POSIX 표준
-    #include <sys/mman.h>
-    #include <sys/stat.h>
-    #include <fcntl.h>
-    #include <unistd.h>
-    #define __popcnt __builtin_popcount
-#endif
-
-#define _CRT_SECURE_NO_WARNINGS
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdint.h>
-#include <string.h>
-#include <time.h>
-#include <inttypes.h>
-
-// --- [OS 추상화 레이어] ---
-#if defined(_WIN32)
-    #include <windows.h>
-    #include <intrin.h>
-#else
     #include <sys/mman.h>
     #include <sys/stat.h>
     #include <fcntl.h>
