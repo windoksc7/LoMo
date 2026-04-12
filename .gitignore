@@ -9,5 +9,3 @@
 .vscode/
 /src/debug/
 /src/engine/dummy_web.log
-
-!/src/engine/log_gen.exe

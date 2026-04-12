@@ -17,7 +17,7 @@ jobs:
 
       - name: Build Generator and Engine
         run: |
-          cl /O2 log_gen.c /Fe:log_gen.exe
+          cl /O2 dummy.c /Fe:log_gen.exe
           cl /O2 /arch:AVX2 scanner.c /Fe:scanner.exe
 
       - name: Generate 1GB Dummy Log
