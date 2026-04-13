@@ -48,9 +48,18 @@ void execute_benchmark(const char* filepath, int target_gb) {
     long long total_scan_limit = (long long)target_gb * 1024 * 1024 * 1024;
     long long processed = 0;
     unsigned long long total_hits = 0;
+    double elapsed = 0;
 
+    #ifdef _WIN32
+    // Windows 고정밀 타이머 활용 [cite: 4]
+    LARGE_INTEGER freq, start, end;
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&start);
+#else
+    // Linux/macOS 고정밀 타이머 활용
     struct timespec start, end;
-    clock_gettime(CLOCK_MONOTONIC, &start); // 고정밀 타이머
+    clock_gettime(CLOCK_MONOTONIC, &start);
+#endif
 
     // 선형적 성능 유지를 확인하기 위한 반복 스캔 
     while (processed < total_scan_limit) {
@@ -58,9 +67,13 @@ void execute_benchmark(const char* filepath, int target_gb) {
         processed += mf.size;
     }
 
+#ifdef _WIN32
+    QueryPerformanceCounter(&end);
+    elapsed = (double)(end.QuadPart - start.QuadPart) / freq.QuadPart;
+#else
     clock_gettime(CLOCK_MONOTONIC, &end);
-    double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
-
+    elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+#endif
     printf("[%dGB] 소요시간: %.4fs | 속도: %.2fGB/s | 결과: %llu lines\n", 
             target_gb, elapsed, (double)target_gb / elapsed, total_hits);
 }
