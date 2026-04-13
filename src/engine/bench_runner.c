@@ -13,11 +13,11 @@
 #endif
 
 // scanner_core.c에 있는 함수를 가져다 씁니다. (원본 수정 없음)
-extern unsigned long long scan_memory_avx2(const unsigned char* data, size_t size, unsigned char target);
+extern void run_analysis(const char* data, size_t fileSize);
 
 // OS 통합 파일 매핑 로직 [cite: 467]
 typedef struct {
-    void* addr;
+    const char* data;
     size_t size;
 } MappedFile;
 
@@ -28,7 +28,7 @@ MappedFile get_mapped_file(const char* path) {
     if (hFile == INVALID_HANDLE_VALUE) return mf;
     LARGE_INTEGER fs; GetFileSizeEx(hFile, &fs); mf.size = (size_t)fs.QuadPart;
     HANDLE hMap = CreateFileMappingA(hFile, NULL, PAGE_READONLY, 0, 0, NULL);
-    mf.addr = MapViewOfFile(hMap, FILE_MAP_READ, 0, 0, 0);
+    mf.data = MapViewOfFile(hMap, FILE_MAP_READ, 0, 0, 0);
 #else
     int fd = open(path, O_RDONLY);
     if (fd < 0) return mf;
@@ -39,8 +39,8 @@ MappedFile get_mapped_file(const char* path) {
 }
 
 void execute_benchmark(const char* filepath, int target_gb) {
-    MappedFile mf = get_mapped_file(filepath);
-    if (!mf.addr) {
+    MappedFile* mf = map_file_to_memory(filepath);
+    if (!mf->data) {
         printf("[Error] 파일 매핑 실패\n");
         return;
     }
@@ -54,8 +54,8 @@ void execute_benchmark(const char* filepath, int target_gb) {
 
     // 선형적 성능 유지를 확인하기 위한 반복 스캔 
     while (processed < total_scan_limit) {
-        total_hits += scan_memory_avx2(mf.addr, mf.size, 0x0A); // 원본 소스 호출
-        processed += mf.size;
+        run_analysis(mf->data, mf->size); // 원본 소스 호출
+        processed += mf->size;
     }
 
     clock_gettime(CLOCK_MONOTONIC, &end);
