@@ -47,5 +47,7 @@ void generate_fake_logs(const char* filename, long long target_size_gb) {
 int main() {
     srand((unsigned int)time(NULL));
     generate_fake_logs("dummy_web.log", 1); // 1GB 생성
+    generate_fake_logs("dummy_web.log", 5); 
+    generate_fake_logs("dummy_web.log", 10); 
     return 0;
 }
