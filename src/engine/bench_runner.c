@@ -21,9 +21,26 @@ typedef struct {
     size_t size;
 } MappedFile;
 
+MappedFile get_mapped_file(const char* path) {
+    MappedFile mf = {NULL, 0};
+#ifdef _WIN32
+    HANDLE hFile = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) return mf;
+    LARGE_INTEGER fs; GetFileSizeEx(hFile, &fs); mf.size = (size_t)fs.QuadPart;
+    HANDLE hMap = CreateFileMappingA(hFile, NULL, PAGE_READONLY, 0, 0, NULL);
+    mf.data = MapViewOfFile(hMap, FILE_MAP_READ, 0, 0, 0);
+#else
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return mf;
+    struct stat st; fstat(fd, &st); mf.size = st.st_size;
+    mf.data = mmap(NULL, mf.size, PROT_READ, MAP_PRIVATE, fd, 0);
+#endif
+    return mf;
+}
+
 void execute_benchmark(const char* filepath, int target_gb) {
-    MappedFile* mf = map_file_to_memory(filepath);
-    if (!mf->data) {
+    MappedFile mf = get_mapped_file(filepath);
+    if (!mf.data) {
         printf("[Error] 파일 매핑 실패\n");
         return;
     }
@@ -37,8 +54,8 @@ void execute_benchmark(const char* filepath, int target_gb) {
 
     // 선형적 성능 유지를 확인하기 위한 반복 스캔 
     while (processed < total_scan_limit) {
-        run_analysis(mf->data, mf->size); // 원본 소스 호출
-        processed += mf->size;
+        run_analysis(mf.data, mf.size); // 원본 소스 호출
+        processed += mf.size;
     }
 
     clock_gettime(CLOCK_MONOTONIC, &end);
