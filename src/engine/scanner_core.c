@@ -170,27 +170,27 @@ int main() {
     // [수정] unmap_file 하나로 깔끔하게 정리
     unmap_file(logFile);
 
-    MappedFile* logFile = map_file_to_memory("dummy_web_5.log");
-    if (!logFile) {
+    MappedFile* logFile5 = map_file_to_memory("dummy_web_5.log");
+    if (!logFile5) {
         printf("Log file mapping failed.\n");
         return 1;
     }
 
-    run_analysis(logFile->data, logFile->size);
+    run_analysis(logFile5->data, logFile5->size);
 
     // [수정] unmap_file 하나로 깔끔하게 정리
-    unmap_file(logFile);
+    unmap_file(logFile5);
 
-    MappedFile* logFile = map_file_to_memory("dummy_web_10.log");
-    if (!logFile) {
+    MappedFile* logFile10 = map_file_to_memory("dummy_web_10.log");
+    if (!logFile10) {
         printf("Log file mapping failed.\n");
         return 1;
     }
 
-    run_analysis(logFile->data, logFile->size);
+    run_analysis(logFile10->data, logFile10->size);
 
     // [수정] unmap_file 하나로 깔끔하게 정리
-    unmap_file(logFile);
+    unmap_file(logFile10);
 
     printf("\nPress Enter to exit...");
     rewind(stdin);
