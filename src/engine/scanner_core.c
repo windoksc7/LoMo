@@ -158,8 +158,30 @@ void run_analysis(const char* data, size_t fileSize) {
     printf("time: %.4f sec (speed: %.2f GB/s)\n", elapsed, (fileSize / 1024.0 / 1024.0 / 1024.0) / elapsed);
 }
 
-int dummy_main() {
+int main() {
     MappedFile* logFile = map_file_to_memory("dummy_web.log");
+    if (!logFile) {
+        printf("Log file mapping failed.\n");
+        return 1;
+    }
+
+    run_analysis(logFile->data, logFile->size);
+
+    // [수정] unmap_file 하나로 깔끔하게 정리
+    unmap_file(logFile);
+
+    MappedFile* logFile = map_file_to_memory("dummy_web_5.log");
+    if (!logFile) {
+        printf("Log file mapping failed.\n");
+        return 1;
+    }
+
+    run_analysis(logFile->data, logFile->size);
+
+    // [수정] unmap_file 하나로 깔끔하게 정리
+    unmap_file(logFile);
+
+    MappedFile* logFile = map_file_to_memory("dummy_web_10.log");
     if (!logFile) {
         printf("Log file mapping failed.\n");
         return 1;
