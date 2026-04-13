@@ -65,6 +65,7 @@ void execute_benchmark(const char* filepath, int target_gb) {
             target_gb, elapsed, (double)target_gb / elapsed, total_hits);
 }
 
+#ifndef TEST_MODE
 int main() {
     const char* test_log = "dummy_web.log"; 
     printf("K-Scanner 3-OS Performance Verification\n");
@@ -76,3 +77,4 @@ int main() {
 
     return 0;
 }
+#endif
