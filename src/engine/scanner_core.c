@@ -158,7 +158,7 @@ void run_analysis(const char* data, size_t fileSize) {
     printf("time: %.4f sec (speed: %.2f GB/s)\n", elapsed, (fileSize / 1024.0 / 1024.0 / 1024.0) / elapsed);
 }
 
-int main() {
+int dummy_main() {
     MappedFile* logFile = map_file_to_memory("dummy_web.log");
     if (!logFile) {
         printf("Log file mapping failed.\n");
