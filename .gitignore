@@ -4,8 +4,15 @@
 *.ilk
 *.so
 *.dll
+*.log
 
 .vs/
 .vscode/
 /src/debug/
+/src/engine/lomo_dummy_part/
+/src/engine/merged_part/
+/src/engine/part_even/
+/src/engine/part_odd/
+/src/engine/test_part_dir/
+
 /src/engine/dummy_web.log
