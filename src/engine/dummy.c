@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <time.h>
 
-void generate_fake_logs(const char* filename, long long target_size_gb) {
+void generate_fake_logs(const char* filename, long long target_size_mb) {
     FILE* fp = fopen(filename, "w");
     if (!fp) return;
 
@@ -17,10 +17,10 @@ void generate_fake_logs(const char* filename, long long target_size_gb) {
     const char* malicious_paths[] = {"/admin/config.php", "/.env", "/wp-login.php", "/etc/passwd"};
 
     long long current_size = 0;
-    long long target_size = target_size_gb * 1024LL * 1024LL * 1024LL;
+    long long target_size = target_size_mb * 1024LL * 1024LL;
     int line_count = 0;
 
-    printf("Generating %lldGB of realistic logs...\n", target_size_gb);
+    printf("Generating %lldMB of realistic logs...\n", target_size_mb);
 
     while (current_size < target_size) {
         char buffer[256];
@@ -46,8 +46,6 @@ void generate_fake_logs(const char* filename, long long target_size_gb) {
 
 int main() {
     srand((unsigned int)time(NULL));
-    generate_fake_logs("dummy_web.log", 1); // 1GB 생성
-    generate_fake_logs("dummy_web_5.log", 5); 
-    generate_fake_logs("dummy_web_10.log", 10); 
+    generate_fake_logs("dummy_web.log", 100); // 100MB
     return 0;
 }

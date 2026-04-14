@@ -1,10 +1,14 @@
-name: 3-OS Performance Benchmark
+name: LoMo Performance Benchmark (Phase 1)
 
-on: [push]
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
 
 jobs:
   benchmark:
-    name: Build on ${{ matrix.os }}
+    name: Build & Test on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -12,37 +16,54 @@ jobs:
 
     strategy:
       matrix:
-        # 3대 OS 환경 설정
+        # Cross-platform validation for Phase 1 Baseline & Phase 2 Roadmap
         os: [windows-latest, ubuntu-latest, macos-latest]
 
     steps:
       - uses: actions/checkout@v4
 
-      # Windows 환경 설정 및 빌드
+      # --- Windows: Full LoMo Phase 1 Suite ---
       - name: Setup MSVC (Windows)
         if: matrix.os == 'windows-latest'
         uses: ilammy/msvc-dev-cmd@v1
-      - name: Build (Windows)
+      
+      - name: Build LoMo Engine (Windows x86/AVX2)
         if: matrix.os == 'windows-latest'
         run: |
-          cl /O2 /arch:AVX2 dummy.c /Fe:log_gen.exe
-          cl /O2 /arch:AVX2 scanner_core.c /Fe:scanner.exe
+          cl /utf-8 /O2 /arch:AVX2 dummy.c /Fe:log_gen.exe
+          cl /utf-8 /O2 /arch:AVX2 scanner_core.c simd_filter.c Cabinet.lib /Fe:scanner.exe
+          cl /utf-8 /O2 /arch:AVX2 benchmark_ingest.c ingestor.c storage_engine.c Cabinet.lib /Fe:benchmark_ingest.exe
+          cl /utf-8 /O2 /arch:AVX2 engine_main.c ingestor.c storage_engine.c sql_parser.c simd_filter.c Cabinet.lib /Fe:lomo_cli.exe
 
-      - name: Build (Linux)
+      # --- Linux/macOS: Baseline SIMD Scanners (Phase 2 Roadmap Placeholder) ---
+      - name: Build Baseline Scanners (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
           gcc -O3 dummy.c -o log_gen
-          gcc -O3 -mavx2 scanner_core.c -o scanner
+          gcc -O3 -mavx2 scanner_core.c simd_filter.c -o scanner
+          # NOTE: Full engine migration to Linux (io_uring/ZSTD) is scheduled for Phase 2.
+          # See: cross_platform.md
 
-      - name: Build (macOS)
+      - name: Build Baseline Scanners (macOS ARM/NEON)
         if: matrix.os == 'macos-latest'
         run: |
           gcc -O3 dummy.c -o log_gen
-          gcc -O3 scanner_core.c -o scanner
+          gcc -O3 scanner_core.c simd_filter.c -o scanner
+          # NOTE: Full engine migration to macOS (Apple Silicon) is scheduled for Phase 2.
 
-      # 공통 실행 단계
-      - name: Run Benchmark
+      # --- Execution & Validation ---
+      - name: Run Baseline Performance Scan (All OS)
         run: |
           ${{ matrix.os == 'windows-latest' && './log_gen.exe' || './log_gen' }}
           ${{ matrix.os == 'windows-latest' && './scanner.exe' || './scanner' }}
-          ${{ matrix.os == 'windows-latest' && './scanner.exe' || './scanner' }}
+
+      - name: Run LoMo Ingestion & SQL Benchmark (Windows Only)
+        if: matrix.os == 'windows-latest'
+        run: |
+          # 1. Ingestion Benchmark
+          ./benchmark_ingest.exe
+          
+          # 2. SQL Query Validation (Phase 1 Logic)
+          echo "query SELECT COUNT(*) FROM 'lomo_dummy_part' WHERE 1 > 100" > cmds.txt
+          echo "exit" >> cmds.txt
+          cat cmds.txt | ./lomo_cli.exe

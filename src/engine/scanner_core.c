@@ -89,66 +89,19 @@ MappedFile* map_file_to_memory(const char* filename) {
 }
 
 
-// --- [OS/CPU별 최적화 필터 함수] ---
-static inline int check_match_32byte(const char* ptr, char c1, char c2) {
-#if defined(__x86_64__) || defined(_M_X64)
-    // 인텔/AMD AVX2 (256비트)
-    __m256i chunk1 = _mm256_loadu_si256((const __m256i*)ptr);
-    __m256i chunk2 = _mm256_loadu_si256((const __m256i*)(ptr + 1));
-    return _mm256_movemask_epi8(_mm256_and_si256(
-        _mm256_cmpeq_epi8(chunk1, _mm256_set1_epi8(c1)),
-        _mm256_cmpeq_epi8(chunk2, _mm256_set1_epi8(c2))
-    ));
-#elif defined(__aarch64__) || defined(_M_ARM64)
-    // Apple Silicon / ARM NEON (128비트)
-    uint8x16_t chunk1 = vld1q_u8((const uint8_t*)ptr);
-    uint8x16_t chunk2 = vld1q_u8((const uint8_t*)(ptr + 1));
-    uint8x16_t cmp = vandq_u8(vceqq_u8(chunk1, vdupq_n_u8(c1)), 
-                              vceqq_u8(chunk2, vdupq_n_u8(c2)));
-    // NEON은 mask가 없으므로 합산이 0보다 크면 일치하는 지점이 있는 것
-    return (vaddvq_u8(cmp) > 0); 
-#else
-    // 가속기가 없는 환경 (일반 C)
-    return (*ptr == c1 && *(ptr+1) == c2);
-#endif
-}
+#include "simd_filter.h"
 
 void run_analysis(const char* data, size_t fileSize) {
     if (!data || fileSize == 0) return; // 방어 코드 추가
 
-    const char* ptr = data;
-    const char* end = data + fileSize;
-
     printf("--- analysis (file size: %.2f GB) ---\n", (double)fileSize / (1024*1024*1024));
 
     clock_t start = clock();
-    uint64_t hacker_ips = 0, admin_hits = 0, env_leaks = 0;
-
-    // 3. Single Pass Scan
-    while (ptr <= end - 33) {
-        // 해커 IP 필터링 (13...)
-        if (check_match_32byte(ptr, '1', '3')) {
-            if (memcmp(ptr, "13.37.13.37", 11) == 0) {
-                hacker_ips++;
-                ptr += 10; // 찾은 후 패턴 길이만큼 대략 점프 (성능 최적화)
-            }
-        }
-        // 어드민 페이지 필터링 (/a...)
-        else if (check_match_32byte(ptr, '/', 'a')) {
-            if (memcmp(ptr, "/admin", 6) == 0) {
-                admin_hits++;
-                ptr += 5;
-            }
-        }
-        // 환경변수 필터링 (/. ...)
-        else if (check_match_32byte(ptr, '/', '.')) {
-            if (memcmp(ptr, "/.env", 5) == 0) {
-                env_leaks++;
-                ptr += 4;
-            }
-        }
-        ptr++; // 기본 1바이트 전진 (정확도 보장)
-    }
+    
+    // Use the new modularized SIMD count function
+    uint64_t hacker_ips = lomo_simd_count_matches(data, fileSize, "13.37.13.37", 11);
+    uint64_t admin_hits = lomo_simd_count_matches(data, fileSize, "/admin", 6);
+    uint64_t env_leaks = lomo_simd_count_matches(data, fileSize, "/.env", 5);
     
     double elapsed = (double)(clock() - start) / CLOCKS_PER_SEC;
     printf("1. hacker IP (13.37.13.37) : %" PRIu64 " count\n", hacker_ips);
@@ -159,41 +112,21 @@ void run_analysis(const char* data, size_t fileSize) {
 }
 
 int main() {
-    MappedFile* logFile = map_file_to_memory("dummy_web.log");
-    if (!logFile) {
-        printf("Log file mapping failed.\n");
-        return 1;
+    const char* targets[] = {"dummy_web.log", "dummy_web_5.log", "dummy_web_10.log"};
+    
+    for (int i = 0; i < 3; i++) {
+        MappedFile* logFile = map_file_to_memory(targets[i]);
+        if (!logFile) {
+            printf("Skipping %s (not found or mapping failed).\n", targets[i]);
+            continue;
+        }
+
+        run_analysis(logFile->data, logFile->size);
+        unmap_file(logFile);
     }
 
-    run_analysis(logFile->data, logFile->size);
-
-    // [수정] unmap_file 하나로 깔끔하게 정리
-    unmap_file(logFile);
-
-    MappedFile* logFile5 = map_file_to_memory("dummy_web_5.log");
-    if (!logFile5) {
-        printf("Log file mapping failed.\n");
-        return 1;
-    }
-
-    run_analysis(logFile5->data, logFile5->size);
-
-    // [수정] unmap_file 하나로 깔끔하게 정리
-    unmap_file(logFile5);
-
-    MappedFile* logFile10 = map_file_to_memory("dummy_web_10.log");
-    if (!logFile10) {
-        printf("Log file mapping failed.\n");
-        return 1;
-    }
-
-    run_analysis(logFile10->data, logFile10->size);
-
-    // [수정] unmap_file 하나로 깔끔하게 정리
-    unmap_file(logFile10);
-
-    printf("\nPress Enter to exit...");
-    rewind(stdin);
-    getchar(); 
+    // printf("\nPress Enter to exit...");
+    // rewind(stdin);
+    // getchar(); 
     return 0;
 }
