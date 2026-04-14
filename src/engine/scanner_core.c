@@ -46,7 +46,7 @@ void unmap_file(MappedFile* mf) {
 #else
     // 리눅스/맥: 구조체에 담아뒀던 mf->fd를 여기서 사용합니다!
     if (mf->data && mf->data != MAP_FAILED) {
-        munmap(mf->data, mf->size); 
+        munmap((void *)mf->data, mf->size); 
     }
     if (mf->fd >= 0) {
         close(mf->fd); // 드디어 fd를 닫습니다.

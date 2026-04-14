@@ -108,4 +108,8 @@ For a deeper understanding of the market positioning and product requirements:
 ---
 
 ## License
-*Internal Release - Strategic IP for Unified Industrial Data Platform.*
+This project is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**. 
+
+LoMo is committed to the open-source community. The AGPL-3.0 ensures that all improvements to the core engine remain open and accessible, especially when the software is used over a network (closing the "SaaS loophole").
+
+For more details, please see the [LICENSE](LICENSE) file.
