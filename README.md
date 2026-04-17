@@ -112,4 +112,6 @@ This project is licensed under the **GNU Affero General Public License v3.0 (AGP
 
 LoMo is committed to the open-source community. The AGPL-3.0 ensures that all improvements to the core engine remain open and accessible, especially when the software is used over a network (closing the "SaaS loophole").
 
+This software is licensed under AGPLv3. If you require commercial usage or need to keep your source code private, please contact us for separate licensing terms.
+
 For more details, please see the [LICENSE](LICENSE) file.
