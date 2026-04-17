@@ -74,7 +74,7 @@ uint64_t lomo_simd_filter_int64_gt(const int64_t* data, size_t count, int64_t th
         
         // _mm256_movemask_epi8 gives 32 bits, but each int64_t comparison produces 8 bits (0xFF)
         // A better way for epi64 is _mm256_movemask_pd (treating it as double-precision mask)
-        int mask = _mm256_movemask_pd(_mm256_castsi256_pd(v_mask));
+        int mask = _mm256_movemask_pd((__m256d)v_mask);
         
 #ifdef _MSC_VER
         total_matches += __popcnt(mask);
@@ -115,7 +115,7 @@ uint64_t lomo_simd_filter_int64_gt_mask(const int64_t* data, size_t count, int64
     for (; i + 3 < count; i += 4) {
         __m256i v_data = _mm256_loadu_si256((const __m256i*)&data[i]);
         __m256i v_mask = _mm256_cmpgt_epi64(v_data, v_threshold);
-        int mask = _mm256_movemask_pd(_mm256_castsi256_pd(v_mask));
+        int mask = _mm256_movemask_pd((__m256d)v_mask);
         
         // Write mask bits (each nibble is 4 bits)
         // This is a simplified bitmask writing.
@@ -163,7 +163,7 @@ uint64_t lomo_simd_count_range_uint64(const uint64_t* data, size_t count, uint64
         __m256i le_max = _mm256_xor_si256(_mm256_cmpgt_epi64(v_data_f, v_max_f), _mm256_set1_epi64x(-1LL));
         
         __m256i in_range = _mm256_and_si256(ge_min, le_max);
-        int mask = _mm256_movemask_pd(_mm256_castsi256_pd(in_range));
+        int mask = _mm256_movemask_pd((__m256d)in_range);
         
 #ifdef _MSC_VER
         total_matches += __popcnt(mask);
