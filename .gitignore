@@ -5,6 +5,7 @@
 *.so
 *.dll
 *.log
+.env
 
 .vs/
 .vscode/
@@ -14,5 +15,6 @@
 /src/engine/part_even/
 /src/engine/part_odd/
 /src/engine/test_part_dir/
+/src/fx_ui/
 
 /src/engine/dummy_web.log
