@@ -43,7 +43,7 @@ LomoMemTable* lomo_init_memtable(uint32_t column_count, const LomoColumnType* ty
     mt->column_capacities = (size_t*)calloc(column_count, sizeof(size_t));
     for (uint32_t i = 0; i < column_count; i++) {
         mt->column_capacities[i] = 1024 * 1024;
-        mt->column_buffers[i] = lomo_aligned_malloc(mt->column_capacities[i], 32);
+        mt->column_buffers[i] = lomo_aligned_malloc(mt->column_capacities[i], 4096);
     }
     lomo_mutex_init(&mt->lock);
     return mt;
@@ -63,7 +63,7 @@ int lomo_ingest_row(LomoMemTable* mt, const void** column_data, const size_t* co
         if (mt->column_sizes[i] + st > mt->column_capacities[i]) {
             size_t nc = mt->column_capacities[i] * 2;
             while (mt->column_sizes[i] + st > nc) nc *= 2;
-            mt->column_buffers[i] = lomo_aligned_realloc(mt->column_buffers[i], nc, 32);
+            mt->column_buffers[i] = lomo_aligned_realloc(mt->column_buffers[i], nc, 4096);
             mt->column_capacities[i] = nc;
         }
         uint8_t* dst = (uint8_t*)mt->column_buffers[i] + mt->column_sizes[i];
@@ -96,7 +96,7 @@ int lomo_flush_memtable(LomoMemTable* mt, const char* directory_path) {
     qsort(idxs, mt->row_count, 4, compare_multi);
 
     for (uint32_t i = 0; i < mt->column_count; i++) {
-        void* sbuf = lomo_aligned_malloc(mt->column_capacities[i], 32);
+        void* sbuf = lomo_aligned_malloc(mt->column_capacities[i], 4096);
         size_t wo = 0;
         if (mt->types[i] == LOMO_TYPE_STRING) {
             size_t* o_offs = (size_t*)malloc(mt->row_count * sizeof(size_t));
@@ -161,7 +161,7 @@ LomoMemTable* lomo_load_memtable_snapshot(const char* file_path) {
     for (uint32_t i = 0; i < col_count; i++) {
         fread(&mt->column_sizes[i], sizeof(size_t), 1, fp);
         if (mt->column_sizes[i] > mt->column_capacities[i]) {
-            mt->column_buffers[i] = lomo_aligned_realloc(mt->column_buffers[i], mt->column_sizes[i], 32);
+            mt->column_buffers[i] = lomo_aligned_realloc(mt->column_buffers[i], mt->column_sizes[i], 4096);
             mt->column_capacities[i] = mt->column_sizes[i];
         }
         fread(mt->column_buffers[i], 1, mt->column_sizes[i], fp);

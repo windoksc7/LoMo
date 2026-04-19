@@ -1,14 +1,36 @@
+# Build artifacts
 *.exe
 *.obj
 *.pdb
 *.ilk
 *.so
 *.dll
+*.o
+*.a
+*.lib
+
+# CMake
+build/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+_deps/
+
+# Logs and environment
 *.log
 .env
 
+# IDEs
 .vs/
 .vscode/
+.idea/
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Project specific data/parts
 /src/debug/
 /src/engine/lomo_dummy_part/
 /src/engine/merged_part/
@@ -16,5 +38,9 @@
 /src/engine/part_odd/
 /src/engine/test_part_dir/
 /src/fx_ui/
-
 /src/engine/dummy_web.log
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class

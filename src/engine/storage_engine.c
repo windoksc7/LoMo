@@ -39,8 +39,10 @@ int lomo_read_column_chunk_simd(const LomoPartHeader* part, uint32_t column_id, 
     FILE* fp = fopen(path, "rb"); if (!fp) return -1;
     fseek(fp, (long)g->start_offset, SEEK_SET);
     
-    if (part->columns[column_id].compression == LOMO_COMPRESS_XPRESS) {
-        void* decompressor = lomo_decompressor_open(LOMO_HAL_COMPRESS_XPRESS);
+    LomoCompressionType ct = part->columns[column_id].compression;
+    if (ct == LOMO_COMPRESS_XPRESS || ct == LOMO_COMPRESS_LZ4) {
+        LomoHALCompressionAlg hal_alg = (ct == LOMO_COMPRESS_XPRESS) ? LOMO_HAL_COMPRESS_XPRESS : LOMO_HAL_COMPRESS_LZ4;
+        void* decompressor = lomo_decompressor_open(hal_alg);
         if (decompressor) {
             void* comp_buf = malloc(g->compressed_size);
             fread(comp_buf, 1, g->compressed_size, fp);
@@ -55,12 +57,10 @@ int lomo_read_column_chunk_simd(const LomoPartHeader* part, uint32_t column_id, 
 int lomo_read_column_simd(const LomoPartHeader* part, uint32_t column_id, void* aligned_buffer, size_t buffer_size) {
     if (!part || column_id >= part->column_count) return -1;
     
-    // Dynamic Swap Avoidance: Check available RAM before loading
 #ifdef _WIN32
     MEMORYSTATUSEX statex;
     statex.dwLength = sizeof(statex);
     if (GlobalMemoryStatusEx(&statex)) {
-        // If required buffer is > 70% of available physical RAM, we might thrash
         if (buffer_size > (size_t)(statex.ullAvailPhys * 0.7)) {
             printf("[LoMo Storage] WARNING: Low Memory! Switch to Chunked Read mode recommended.\n");
         }
@@ -71,9 +71,11 @@ int lomo_read_column_simd(const LomoPartHeader* part, uint32_t column_id, void* 
     FILE* fp = fopen(path, "rb"); if (!fp) return -1;
 
     uint8_t* dst = (uint8_t*)aligned_buffer;
+    LomoCompressionType ct = part->columns[column_id].compression;
     void* decompressor = NULL;
-    if (part->columns[column_id].compression == LOMO_COMPRESS_XPRESS) {
-        decompressor = lomo_decompressor_open(LOMO_HAL_COMPRESS_XPRESS);
+    if (ct == LOMO_COMPRESS_XPRESS || ct == LOMO_COMPRESS_LZ4) {
+        LomoHALCompressionAlg hal_alg = (ct == LOMO_COMPRESS_XPRESS) ? LOMO_HAL_COMPRESS_XPRESS : LOMO_HAL_COMPRESS_LZ4;
+        decompressor = lomo_decompressor_open(hal_alg);
     }
 
     for (uint32_t g = 0; g < part->granule_count; g++) {
@@ -102,16 +104,16 @@ int lomo_flush_part(LomoPartHeader* part, const char* directory_path, void** col
 
     uint32_t num_granules = (uint32_t)((part->total_rows + LOMO_GRANULE_ROWS - 1) / LOMO_GRANULE_ROWS);
     part->granule_count = num_granules;
-    // Total index entries = column_count * granule_count
     part->index = (LomoSparseIndexGranule*)calloc(part->column_count * num_granules, sizeof(LomoSparseIndexGranule));
 
-    void* compressor = lomo_compressor_open(LOMO_HAL_COMPRESS_XPRESS);
+    void* compressor = lomo_compressor_open(LOMO_HAL_COMPRESS_LZ4);
 
     for (uint32_t c = 0; c < part->column_count; c++) {
         char path[256]; sprintf(path, "%s/%u.col", directory_path, c);
-        FILE* fp = fopen(path, "wb"); if (!fp) continue;
+        LomoFile* lf = lomo_file_open_write(path);
+        if (!lf) continue;
 
-        part->columns[c].compression = LOMO_COMPRESS_XPRESS;
+        part->columns[c].compression = LOMO_COMPRESS_LZ4;
         uint64_t current_file_offset = 0;
         uint8_t* col_base = (uint8_t*)column_buffers[c];
 
@@ -131,32 +133,33 @@ int lomo_flush_part(LomoPartHeader* part, const char* directory_path, void** col
             }
 
             LomoSparseIndexGranule* g_meta = LOMO_GET_GRANULE(part, c, g);
-            void* comp_buf = malloc(uncomp_size + 1024);
+            // Using 4KB alignment for O_DIRECT compatibility
+            void* comp_buf = lomo_aligned_malloc(uncomp_size + 4096, 4096);
             size_t comp_size = 0;
             int ok = lomo_compress(compressor, col_base + src_offset, uncomp_size, comp_buf, uncomp_size + 1024, &comp_size);
             
             if (ok && comp_size < uncomp_size) {
-                fwrite(comp_buf, 1, comp_size, fp);
+                lomo_file_write_async(lf, current_file_offset, comp_buf, comp_size);
                 g_meta->start_offset = current_file_offset;
                 g_meta->compressed_size = (uint32_t)comp_size; 
                 g_meta->uncompressed_size = (uint32_t)uncomp_size; 
                 current_file_offset += comp_size;
             } else {
-                fwrite(col_base + src_offset, 1, uncomp_size, fp);
+                lomo_file_write_async(lf, current_file_offset, col_base + src_offset, uncomp_size);
                 g_meta->start_offset = current_file_offset;
                 g_meta->compressed_size = (uint32_t)uncomp_size; 
                 g_meta->uncompressed_size = (uint32_t)uncomp_size; 
                 current_file_offset += uncomp_size;
             }
             g_meta->row_count = rows_in_g;
-            if (c == 0) { // TS Metadata for primary column
+            if (c == 0) { 
                 uint64_t* ts = (uint64_t*)column_buffers[0];
                 g_meta->min_timestamp = ts[start_row];
                 g_meta->max_timestamp = ts[start_row + rows_in_g - 1];
             }
-            free(comp_buf);
+            lomo_aligned_free(comp_buf);
         }
-        fclose(fp);
+        lomo_file_flush_and_close(lf);
         part->columns[c].column_id = c; part->columns[c].uncompressed_size = column_sizes[c]; part->columns[c].compressed_size = current_file_offset;
     }
     if (compressor) lomo_compressor_close(compressor);

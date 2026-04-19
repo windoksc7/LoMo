@@ -3,6 +3,8 @@
 #include <windows.h>
 #include <malloc.h>
 #include <compressapi.h>
+#include <lz4.h>
+#include <stdlib.h>
 
 void* lomo_aligned_malloc(size_t size, size_t alignment) {
     return _aligned_malloc(size, alignment);
@@ -76,7 +78,38 @@ void lomo_mmap_close(LomoMappedFile* mf) {
     mf->handle = NULL;
 }
 
+LomoFile* lomo_file_open_write(const char* path) {
+    HANDLE hFile = CreateFileA(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) return NULL;
+    LomoFile* lf = (LomoFile*)malloc(sizeof(LomoFile));
+    lf->handle = hFile;
+    lf->extra = NULL;
+    return lf;
+}
+
+int lomo_file_write_async(LomoFile* file, uint64_t offset, const void* data, size_t size) {
+    // For Windows MVP, we use synchronous WriteFile with offset
+    OVERLAPPED ol = {0};
+    ol.Offset = (DWORD)(offset & 0xFFFFFFFF);
+    ol.OffsetHigh = (DWORD)(offset >> 32);
+    DWORD written = 0;
+    if (WriteFile((HANDLE)file->handle, data, (DWORD)size, &written, &ol)) {
+        return 1;
+    }
+    return 0;
+}
+
+int lomo_file_flush_and_close(LomoFile* file) {
+    if (!file) return 0;
+    FlushFileBuffers((HANDLE)file->handle);
+    CloseHandle((HANDLE)file->handle);
+    free(file);
+    return 1;
+}
+
 void* lomo_compressor_open(LomoHALCompressionAlg alg) {
+    if (alg == LOMO_HAL_COMPRESS_LZ4) return (void*)2; 
+
     COMPRESSOR_HANDLE handle = NULL;
     DWORD win_alg = (alg == LOMO_HAL_COMPRESS_XPRESS) ? COMPRESS_ALGORITHM_XPRESS : 0;
     if (win_alg && CreateCompressor(win_alg, NULL, &handle)) {
@@ -86,10 +119,19 @@ void* lomo_compressor_open(LomoHALCompressionAlg alg) {
 }
 
 void lomo_compressor_close(void* handle) {
+    if (handle == (void*)2) return;
     if (handle) CloseCompressor((COMPRESSOR_HANDLE)handle);
 }
 
 int lomo_compress(void* handle, const void* src, size_t src_size, void* dst, size_t dst_capacity, size_t* compressed_size) {
+    if (handle == (void*)2) {
+        int res = LZ4_compress_default((const char*)src, (char*)dst, (int)src_size, (int)dst_capacity);
+        if (res > 0) {
+            *compressed_size = (size_t)res;
+            return 1;
+        }
+        return 0;
+    }
     SIZE_T comp_size = 0;
     if (Compress((COMPRESSOR_HANDLE)handle, (PVOID)src, src_size, dst, dst_capacity, &comp_size)) {
         *compressed_size = (size_t)comp_size;
@@ -99,6 +141,8 @@ int lomo_compress(void* handle, const void* src, size_t src_size, void* dst, siz
 }
 
 void* lomo_decompressor_open(LomoHALCompressionAlg alg) {
+    if (alg == LOMO_HAL_COMPRESS_LZ4) return (void*)2;
+
     DECOMPRESSOR_HANDLE handle = NULL;
     DWORD win_alg = (alg == LOMO_HAL_COMPRESS_XPRESS) ? COMPRESS_ALGORITHM_XPRESS : 0;
     if (win_alg && CreateDecompressor(win_alg, NULL, &handle)) {
@@ -108,10 +152,19 @@ void* lomo_decompressor_open(LomoHALCompressionAlg alg) {
 }
 
 void lomo_decompressor_close(void* handle) {
+    if (handle == (void*)2) return;
     if (handle) CloseDecompressor((DECOMPRESSOR_HANDLE)handle);
 }
 
 int lomo_decompress(void* handle, const void* src, size_t src_size, void* dst, size_t dst_size, size_t* decompressed_size) {
+    if (handle == (void*)2) {
+        int res = LZ4_decompress_safe((const char*)src, (char*)dst, (int)src_size, (int)dst_size);
+        if (res >= 0) {
+            *decompressed_size = (size_t)res;
+            return 1;
+        }
+        return 0;
+    }
     SIZE_T decomp_size = 0;
     if (Decompress((DECOMPRESSOR_HANDLE)handle, (PVOID)src, src_size, dst, dst_size, &decomp_size)) {
         *decompressed_size = (size_t)decomp_size;

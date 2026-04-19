@@ -30,9 +30,20 @@ typedef struct LomoMappedFile {
 int lomo_mmap_open(const char* filename, LomoMappedFile* mf);
 void lomo_mmap_close(LomoMappedFile* mf);
 
+// High-Performance File I/O
+typedef struct LomoFile {
+    void* handle;      // OS-specific handle (HANDLE on Win, fd on POSIX)
+    void* extra;       // Placeholder for io_uring ring or other context
+} LomoFile;
+
+LomoFile* lomo_file_open_write(const char* path);
+int lomo_file_write_async(LomoFile* file, uint64_t offset, const void* data, size_t size);
+int lomo_file_flush_and_close(LomoFile* file);
+
 // Compression
 typedef enum {
-    LOMO_HAL_COMPRESS_XPRESS = 1
+    LOMO_HAL_COMPRESS_XPRESS = 1,
+    LOMO_HAL_COMPRESS_LZ4 = 2
 } LomoHALCompressionAlg;
 
 void* lomo_compressor_open(LomoHALCompressionAlg alg);

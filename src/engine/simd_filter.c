@@ -71,11 +71,7 @@ uint64_t lomo_simd_filter_int64_gt(const int64_t* data, size_t count, int64_t th
     for (; i + 3 < count; i += 4) {
         __m256i v_data = _mm256_loadu_si256((const __m256i*)&data[i]);
         __m256i v_mask = _mm256_cmpgt_epi64(v_data, v_threshold);
-        
-        // _mm256_movemask_epi8 gives 32 bits, but each int64_t comparison produces 8 bits (0xFF)
-        // A better way for epi64 is _mm256_movemask_pd (treating it as double-precision mask)
-        int mask = _mm256_movemask_pd((__m256d)v_mask);
-        
+        int mask = _mm256_movemask_pd(_mm256_castsi256_pd(v_mask));
 #ifdef _MSC_VER
         total_matches += __popcnt(mask);
 #else
@@ -88,8 +84,6 @@ uint64_t lomo_simd_filter_int64_gt(const int64_t* data, size_t count, int64_t th
     for (; i + 1 < count; i += 2) {
         int64x2_t v_data = vld1q_s64(&data[i]);
         uint64x2_t v_mask = vcgtq_s64(v_data, v_threshold);
-        // Sum the mask results (0xFFFFFFFFFFFFFFFF if true, 0 if false)
-        // Divide by (uint64_t)-1 is slow, so we check elements
         if (vgetq_lane_u64(v_mask, 0)) total_matches++;
         if (vgetq_lane_u64(v_mask, 1)) total_matches++;
     }
@@ -115,16 +109,27 @@ uint64_t lomo_simd_filter_int64_gt_mask(const int64_t* data, size_t count, int64
     for (; i + 3 < count; i += 4) {
         __m256i v_data = _mm256_loadu_si256((const __m256i*)&data[i]);
         __m256i v_mask = _mm256_cmpgt_epi64(v_data, v_threshold);
-        int mask = _mm256_movemask_pd((__m256d)v_mask);
-        
-        // Write mask bits (each nibble is 4 bits)
-        // This is a simplified bitmask writing.
+        int mask = _mm256_movemask_pd(_mm256_castsi256_pd(v_mask));
         for(int bit = 0; bit < 4; bit++) {
             if (mask & (1 << bit)) {
                 size_t idx = i + bit;
                 out_mask[idx / 8] |= (1 << (idx % 8));
                 total_matches++;
             }
+        }
+    }
+#elif defined(__aarch64__) || defined(_M_ARM64)
+    int64x2_t v_threshold = vdupq_n_s64(threshold);
+    for (; i + 1 < count; i += 2) {
+        int64x2_t v_data = vld1q_s64(&data[i]);
+        uint64x2_t v_mask = vcgtq_s64(v_data, v_threshold);
+        if (vgetq_lane_u64(v_mask, 0)) {
+            out_mask[i / 8] |= (1 << (i % 8));
+            total_matches++;
+        }
+        if (vgetq_lane_u64(v_mask, 1)) {
+            out_mask[(i+1) / 8] |= (1 << ((i+1) % 8));
+            total_matches++;
         }
     }
 #endif
@@ -149,27 +154,32 @@ uint64_t lomo_simd_count_range_uint64(const uint64_t* data, size_t count, uint64
     __m256i v_min = _mm256_set1_epi64x((int64_t)min_val);
     __m256i v_max = _mm256_set1_epi64x((int64_t)max_val);
     __m256i sign_flip = _mm256_set1_epi64x((int64_t)0x8000000000000000ULL);
-
     __m256i v_min_f = _mm256_xor_si256(v_min, sign_flip);
     __m256i v_max_f = _mm256_xor_si256(v_max, sign_flip);
 
     for (; i + 3 < count; i += 4) {
         __m256i v_data = _mm256_loadu_si256((const __m256i*)&data[i]);
         __m256i v_data_f = _mm256_xor_si256(v_data, sign_flip);
-        
-        // x >= min  <=> NOT(min > x)
         __m256i ge_min = _mm256_xor_si256(_mm256_cmpgt_epi64(v_min_f, v_data_f), _mm256_set1_epi64x(-1LL));
-        // x <= max  <=> NOT(x > max)
         __m256i le_max = _mm256_xor_si256(_mm256_cmpgt_epi64(v_data_f, v_max_f), _mm256_set1_epi64x(-1LL));
-        
         __m256i in_range = _mm256_and_si256(ge_min, le_max);
-        int mask = _mm256_movemask_pd((__m256d)in_range);
-        
+        int mask = _mm256_movemask_pd(_mm256_castsi256_pd(in_range));
 #ifdef _MSC_VER
         total_matches += __popcnt(mask);
 #else
         total_matches += __builtin_popcount(mask);
 #endif
+    }
+#elif defined(__aarch64__) || defined(_M_ARM64)
+    uint64x2_t v_min = vdupq_n_u64(min_val);
+    uint64x2_t v_max = vdupq_n_u64(max_val);
+    for (; i + 1 < count; i += 2) {
+        uint64x2_t v_data = vld1q_u64(&data[i]);
+        uint64x2_t ge_min = vcgeq_u64(v_data, v_min);
+        uint64x2_t le_max = vcleq_u64(v_data, v_max);
+        uint64x2_t in_range = vandq_u64(ge_min, le_max);
+        if (vgetq_lane_u64(in_range, 0)) total_matches++;
+        if (vgetq_lane_u64(in_range, 1)) total_matches++;
     }
 #endif
 
@@ -189,12 +199,8 @@ uint64_t lomo_simd_count_matches_masked(const char* data, size_t count, size_t r
     char c2 = pattern[1];
 
     for (size_t i = 0; i < count; i++) {
-        // Skip row if it didn't survive the previous filter
         if (!(mask[i / 8] & (1 << (i % 8)))) continue;
-
         const char* row_ptr = data + (i * row_size);
-        // We use the 2-byte SIMD match to quickly scan the row for the pattern start
-        // This is still SIMD-accelerated even at the row level
         if (lomo_simd_match_2byte(row_ptr, c1, c2)) {
             if (memcmp(row_ptr, pattern, pattern_len) == 0) {
                 total_matches++;
@@ -218,18 +224,13 @@ uint64_t lomo_simd_filter_string_contains_mask(const char* data, size_t total_ro
         uint64_t len = *(uint64_t*)ptr;
         ptr += sizeof(uint64_t);
 
-        // Check input mask if present
         if (!in_mask || (in_mask[i / 8] & (1 << (i % 8)))) {
-            // High-speed check for substring
             int matched = 0;
             if (pattern_len == 1) {
-                // Single byte search
                 for(uint64_t j=0; j<len; j++) if (((char*)ptr)[j] == c1) { matched = 1; break; }
             } else {
-                // Substring search (SIMD-accelerated 2-byte filtering)
                 const char* row_ptr = (const char*)ptr;
                 for(uint64_t j=0; j + pattern_len <= len; j++) {
-                    // Optimized check: find 2-byte match first
                     if (row_ptr[j] == c1 && row_ptr[j+1] == c2) {
                         if (memcmp(row_ptr + j, pattern, pattern_len) == 0) {
                             matched = 1;
@@ -238,7 +239,6 @@ uint64_t lomo_simd_filter_string_contains_mask(const char* data, size_t total_ro
                     }
                 }
             }
-
             if (matched) {
                 out_mask[i / 8] |= (1 << (i % 8));
                 total_matches++;
@@ -264,6 +264,13 @@ int64_t lomo_simd_sum_int64(const int64_t* data, size_t count) {
     int64_t temp[4];
     _mm256_storeu_si256((__m256i*)temp, v_total);
     total = temp[0] + temp[1] + temp[2] + temp[3];
+#elif defined(__aarch64__) || defined(_M_ARM64)
+    int64x2_t v_total = vdupq_n_s64(0);
+    for (; i + 1 < count; i += 2) {
+        int64x2_t v_data = vld1q_s64(&data[i]);
+        v_total = vaddq_s64(v_total, v_data);
+    }
+    total = vaddvq_s64(v_total);
 #endif
 
     for (; i < count; i++) {
@@ -282,7 +289,6 @@ int64_t lomo_simd_max_int64(const int64_t* data, size_t count) {
         __m256i v_max = _mm256_loadu_si256((const __m256i*)&data[0]);
         for (i = 4; i + 3 < count; i += 4) {
             __m256i v_data = _mm256_loadu_si256((const __m256i*)&data[i]);
-            // AVX2 doesn't have a direct max_epi64, so we use cmp + blend
             __m256i v_mask = _mm256_cmpgt_epi64(v_data, v_max);
             v_max = _mm256_blendv_epi8(v_max, v_data, v_mask);
         }
@@ -291,6 +297,15 @@ int64_t lomo_simd_max_int64(const int64_t* data, size_t count) {
         for(int j = 0; j < 4; j++) {
             if (temp[j] > max_val) max_val = temp[j];
         }
+    }
+#elif defined(__aarch64__) || defined(_M_ARM64)
+    if (count >= 2) {
+        int64x2_t v_max = vld1q_s64(&data[0]);
+        for (i = 2; i + 1 < count; i += 2) {
+            int64x2_t v_data = vld1q_s64(&data[i]);
+            v_max = vmaxq_s64(v_max, v_data);
+        }
+        max_val = vmaxvq_s64(v_max);
     }
 #endif
 

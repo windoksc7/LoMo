@@ -20,7 +20,8 @@ typedef enum {
 
 typedef enum {
     LOMO_COMPRESS_NONE = 0,
-    LOMO_COMPRESS_XPRESS = 1 
+    LOMO_COMPRESS_XPRESS = 1,
+    LOMO_COMPRESS_LZ4 = 2
 } LomoCompressionType;
 
 // 3. Column Metadata

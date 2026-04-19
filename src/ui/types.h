@@ -1,8 +1,9 @@
 #ifndef LOMO_TYPES_H
 #define LOMO_TYPES_H
 
-#include <windows.h>
-
+#include <stdint.h>
+#include <stdbool.h>
+#include <wchar.h>
 
 typedef struct {
     float currentEnergy;  // 현재 화면에 보이는 에너지 (보간용)
@@ -11,7 +12,6 @@ typedef struct {
 } VisualState;
 
 // 1. 개별 줄 데이터 구조
-// types.h 내 Line 구조체 수정
 typedef struct {
     wchar_t* text;
     int length;
@@ -20,12 +20,10 @@ typedef struct {
     int targetLine;      
     VisualState vState;   // 구조체 안에 포함 (접근이 편함)
     int resolvedTargetIdx;
-    BOOL isDirty;     
+    bool isDirty;     
     char unitName[64];   
     char targetName[64]; 
 } Line;
-
-
 
 // 2. 전체 문서 데이터 구조
 typedef struct {
@@ -41,12 +39,11 @@ typedef struct {
     int curY;         // 커서 Y 인덱스
     
     // 렌더링 및 UI 관련 상태
-    HWND hwnd;        // 윈도우 핸들
-    HFONT hFont;      // 폰트 핸들
+    void* os_handle;  // Replacement for HWND
+    void* font_handle; // Replacement for HFONT
     int charWidth;    // 폰트 너비 (고정폭 대비용)
     int charHeight;   // 폰트 높이
     
-    // 추후 확장 예정 (스크롤 등)
     int scrollY;      
     int scrollX;
 } EditorContext;
