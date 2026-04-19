@@ -4,6 +4,7 @@
 #include <time.h>
 #include "ingestor.h"
 #include "storage_engine.h"
+#include "merger.h"
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -24,21 +25,53 @@ double get_time() {
 }
 #endif
 
+void create_dummy_it_part(uint64_t base_ts) {
+    printf("[LoMo Benchmark] Creating dummy IT (MES) part with 100 intervals...\n");
+    LomoColumnType it_types[] = { LOMO_TYPE_INT64, LOMO_TYPE_INT64, LOMO_TYPE_TIMESTAMP, LOMO_TYPE_TIMESTAMP };
+    LomoMemTable* mt = lomo_init_memtable(4, it_types);
+    
+    for (uint32_t i = 0; i < 100; i++) {
+        int64_t recipe_id = i;
+        int64_t lot_id = 100 + (i / 10);
+        uint64_t start_ts = base_ts + (i * 1000);
+        uint64_t end_ts = start_ts + 800;
+        
+        const void* data[] = { &recipe_id, &lot_id, &start_ts, &end_ts };
+        size_t sizes[] = { 8, 8, 8, 8 };
+        lomo_ingest_row(mt, data, sizes);
+    }
+    
+    printf("[LoMo Benchmark] Flushing IT memtable...\n");
+    lomo_flush_memtable(mt, "it_part_dummy");
+    printf("[LoMo Benchmark] IT flush done.\n");
+    lomo_free_memtable(mt);
+}
+
 int main() {
     const char* filename = "dummy_web.log";
-    
+    uint64_t base_ts = (uint64_t)time(NULL);
+
+    // 1. Setup Background Merger Daemon
+    const char* pipeline_dir = "lomo_pipeline_parts";
+    const char* merged_dir = "merged_parts_benchmark";
+    LomoMergerDaemon* daemon = lomo_start_merger_daemon(pipeline_dir, merged_dir);
+
+    // 2. Setup Ingestion Pipeline
     LomoColumnType types[] = { LOMO_TYPE_TIMESTAMP, LOMO_TYPE_STRING, LOMO_TYPE_INT64 };
-    LomoMemTable* mt = lomo_init_memtable(3, types);
+    LomoIngestPipeline* lp = lomo_init_pipeline(4, pipeline_dir, 3, types);
+
     uint32_t target_rows = 5000000; 
-    mt->max_rows = target_rows + 1000; 
+    uint32_t rows_per_part = 500000; // Trigger more frequent flushes for daemon to pick up
+
+    LomoMemTable* mt = lomo_init_memtable(3, types);
 
     char line[512];
     uint64_t count = 0;
     uint64_t total_bytes = 0;
 
-    printf("[LoMo Benchmark] Starting multi-pass ingestion to reach %u rows...\n", target_rows);
+    printf("[LoMo Benchmark] Starting Pipeline Ingestion (5M rows, 4 flusher threads)...\n");
     
-    double start_ingest = get_time();
+    double start_total = get_time();
 
     while (count < target_rows) {
         FILE* fp = fopen(filename, "r");
@@ -50,7 +83,7 @@ int main() {
             size_t len = strlen(line);
             total_bytes += len;
             
-            uint64_t ts = (uint64_t)time(NULL) + count; 
+            uint64_t ts = base_ts + count; 
             int64_t status = 200; 
             
             const void* data[] = { &ts, line, &status };
@@ -59,29 +92,30 @@ int main() {
             lomo_ingest_row(mt, data, sizes);
             count++;
 
-            if (count % 1000000 == 0) {
-                printf("Ingested %llu rows...\n", count);
+            if (mt->row_count >= rows_per_part) {
+                lomo_pipeline_submit(lp, mt);
+                mt = lomo_init_memtable(3, types);
+                printf("[LoMo Benchmark] Submitted part (%llu rows total)...\n", count);
             }
         }
         fclose(fp);
     }
 
-    double end_ingest = get_time();
-    double elapsed_ingest = end_ingest - start_ingest;
+    if (mt->row_count > 0) lomo_pipeline_submit(lp, mt);
+    else lomo_free_memtable(mt);
 
-    printf("[LoMo Benchmark] Ingested %llu rows in %.4f sec (Ingestion speed: %.2f MB/s)\n", 
-           count, elapsed_ingest, (total_bytes / 1024.0 / 1024.0) / elapsed_ingest);
+    // 3. Shutdown Pipeline (wait for flushes)
+    lomo_shutdown_pipeline(lp);
 
-    printf("[LoMo Benchmark] Flushing to disk (LZ4 Compression)...\n");
-    double start_flush = get_time();
-    lomo_flush_memtable(mt, "lomo_dummy_part");
-    double end_flush = get_time();
-    double elapsed_flush = end_flush - start_flush;
+    // 4. Wait a bit for daemon to pick up last parts
+    printf("[LoMo Benchmark] Waiting for background merger to finish consolidation...\n");
+    std::this_thread::sleep_for(std::chrono::seconds(5));
 
-    printf("[LoMo Benchmark] Flush completed in %.4f sec.\n", elapsed_flush);
-    printf("[LoMo Benchmark] TOTAL TIME: %.4f sec (Overall speed: %.2f MB/s)\n", 
-           elapsed_ingest + elapsed_flush, (total_bytes / 1024.0 / 1024.0) / (elapsed_ingest + elapsed_flush));
+    lomo_stop_merger_daemon(daemon);
 
-    lomo_free_memtable(mt);
+    double end_total = get_time();
+    double elapsed_total = end_total - start_total;
+
+    printf("[LoMo Benchmark] Ingestion complete. TOTAL TIME: %.4f sec\n", elapsed_total);
     return 0;
 }

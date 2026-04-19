@@ -88,7 +88,6 @@ LomoFile* lomo_file_open_write(const char* path) {
 }
 
 int lomo_file_write_async(LomoFile* file, uint64_t offset, const void* data, size_t size) {
-    // For Windows MVP, we use synchronous WriteFile with offset
     OVERLAPPED ol = {0};
     ol.Offset = (DWORD)(offset & 0xFFFFFFFF);
     ol.OffsetHigh = (DWORD)(offset >> 32);

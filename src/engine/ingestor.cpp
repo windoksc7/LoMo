@@ -3,34 +3,48 @@
 #include <string.h>
 #include <stdio.h>
 #include <mutex>
+#include <atomic>
+#include <thread>
+#include <vector>
+#ifdef _WIN32
+#include <direct.h>
+#endif
 #include "lomo_os.h"
 
+// --- Multi-Column Sort Context ---
 typedef struct {
     const uint64_t* ts;
     const uint8_t* symbols;
     const size_t* sym_offsets;
 } SortContext;
 
-static SortContext g_ctx;
+static thread_local SortContext g_ctx; // Use thread_local for parallel flushes
 
 static int compare_multi(const void* a, const void* b) {
     uint32_t ia = *(const uint32_t*)a;
     uint32_t ib = *(const uint32_t*)b;
     
-    const uint8_t* sa = g_ctx.symbols + g_ctx.sym_offsets[ia];
-    const uint8_t* sb = g_ctx.symbols + g_ctx.sym_offsets[ib];
-    uint64_t lena = *(uint64_t*)sa;
-    uint64_t lenb = *(uint64_t*)sb;
-    size_t min_len = (size_t)(lena < lenb ? lena : lenb);
-    int cmp = memcmp(sa + 8, sb + 8, min_len);
-    if (cmp != 0) return cmp;
-    if (lena < lenb) return -1;
-    if (lena > lenb) return 1;
-
+    // Primary Sort: Timestamp (Always present in column 0 for LoMo)
     if (g_ctx.ts[ia] < g_ctx.ts[ib]) return -1;
     if (g_ctx.ts[ia] > g_ctx.ts[ib]) return 1;
+
+    // Secondary Sort: Symbols (if context initialized)
+    if (g_ctx.symbols && g_ctx.sym_offsets) {
+        const uint8_t* sa = g_ctx.symbols + g_ctx.sym_offsets[ia];
+        const uint8_t* sb = g_ctx.symbols + g_ctx.sym_offsets[ib];
+        uint64_t lena = *(uint64_t*)sa;
+        uint64_t lenb = *(uint64_t*)sb;
+        size_t min_len = (size_t)(lena < lenb ? lena : lenb);
+        int cmp = memcmp(sa + 8, sb + 8, min_len);
+        if (cmp != 0) return cmp;
+        if (lena < lenb) return -1;
+        if (lena > lenb) return 1;
+    }
+
     return 0;
 }
+
+// --- MemTable Core ---
 
 LomoMemTable* lomo_init_memtable(uint32_t column_count, const LomoColumnType* types) {
     LomoMemTable* mt = (LomoMemTable*)malloc(sizeof(LomoMemTable));
@@ -53,9 +67,8 @@ int lomo_ingest_row(LomoMemTable* mt, const void** column_data, const size_t* co
     std::mutex* m = (std::mutex*)mt->lock_handle;
     std::lock_guard<std::mutex> lock(*m);
 
-    if (mt->row_count >= mt->max_rows) {
-        return -1;
-    }
+    if (mt->row_count >= mt->max_rows) return -1;
+
     for (uint32_t i = 0; i < mt->column_count; i++) {
         size_t sz = column_sizes[i];
         size_t st = (mt->types[i] == LOMO_TYPE_STRING) ? (sz + 8) : sz;
@@ -78,23 +91,32 @@ int lomo_ingest_row(LomoMemTable* mt, const void** column_data, const size_t* co
 int lomo_flush_memtable(LomoMemTable* mt, const char* directory_path) {
     if (!mt || mt->row_count == 0) return 0;
     
-    // We lock during flush to ensure consistency if another thread tries to ingest
-    std::mutex* m = (std::mutex*)mt->lock_handle;
-    std::lock_guard<std::mutex> lock(*m);
-
+    // Multi-threaded safety: caller ensures this mt isn't being modified.
     uint32_t* idxs = (uint32_t*)malloc(mt->row_count * 4);
     for (uint32_t i = 0; i < mt->row_count; i++) idxs[i] = i;
 
     g_ctx.ts = (const uint64_t*)mt->column_buffers[0];
-    g_ctx.symbols = (const uint8_t*)mt->column_buffers[1]; 
-    size_t* sym_offs = (size_t*)malloc(mt->row_count * sizeof(size_t));
-    size_t scan = 0;
-    for (uint32_t r = 0; r < mt->row_count; r++) {
-        sym_offs[r] = scan; scan += (8 + *(uint64_t*)(g_ctx.symbols + scan));
+    
+    // Optional: Secondary sort on first string column found
+    g_ctx.symbols = NULL;
+    g_ctx.sym_offsets = NULL;
+    size_t* sym_offs = NULL;
+    
+    int string_col_idx = -1;
+    for (uint32_t i = 0; i < mt->column_count; i++) {
+        if (mt->types[i] == LOMO_TYPE_STRING) { string_col_idx = i; break; }
     }
-    g_ctx.sym_offsets = sym_offs;
 
-    printf("[LoMo Ingestor] Multi-Column Sorting [Symbol, TS] for %u rows...\n", mt->row_count);
+    if (string_col_idx != -1) {
+        g_ctx.symbols = (const uint8_t*)mt->column_buffers[string_col_idx]; 
+        sym_offs = (size_t*)malloc(mt->row_count * sizeof(size_t));
+        size_t scan = 0;
+        for (uint32_t r = 0; r < mt->row_count; r++) {
+            sym_offs[r] = scan; scan += (8 + *(uint64_t*)(g_ctx.symbols + scan));
+        }
+        g_ctx.sym_offsets = sym_offs;
+    }
+
     qsort(idxs, mt->row_count, 4, compare_multi);
 
     for (uint32_t i = 0; i < mt->column_count; i++) {
@@ -124,18 +146,102 @@ int lomo_flush_memtable(LomoMemTable* mt, const char* directory_path) {
     for (uint32_t i = 0; i < mt->column_count; i++) p->columns[i].type = mt->types[i];
     int res = lomo_flush_part(p, directory_path, mt->column_buffers, mt->column_sizes);
     lomo_free_part(p); free(idxs); free(sym_offs);
-    for (uint32_t i = 0; i < mt->column_count; i++) mt->column_sizes[i] = 0;
-    mt->row_count = 0; return res;
+    return res;
 }
 
 void lomo_free_memtable(LomoMemTable* mt) {
     if (!mt) return;
-    if (mt->lock_handle) {
-        delete (std::mutex*)mt->lock_handle;
-    }
+    if (mt->lock_handle) delete (std::mutex*)mt->lock_handle;
     for (uint32_t i = 0; i < mt->column_count; i++) lomo_aligned_free(mt->column_buffers[i]);
     free(mt->column_buffers); free(mt->column_sizes); free(mt->column_capacities); free(mt->types); free(mt);
 }
+
+// --- Phase 2: Ingestion Pipeline Implementation ---
+
+#define LOMO_PIPELINE_CAPACITY 32
+
+struct LomoIngestPipeline {
+    std::atomic<LomoMemTable*> queue[LOMO_PIPELINE_CAPACITY];
+    std::atomic<size_t> head;
+    std::atomic<size_t> tail;
+    std::atomic<bool> running;
+    std::vector<std::jthread> workers;
+    char* directory_path;
+    uint32_t column_count;
+    LomoColumnType* types;
+};
+
+void lomo_flusher_worker(LomoIngestPipeline* lp) {
+    char partition_name[256];
+    static std::atomic<int> part_counter{0};
+
+    while (lp->running || lp->head.load() != lp->tail.load()) {
+        size_t t = lp->tail.load();
+        if (t == lp->head.load()) {
+            std::this_thread::yield();
+            continue;
+        }
+
+        LomoMemTable* mt = lp->queue[t % LOMO_PIPELINE_CAPACITY].exchange(nullptr);
+        if (mt) {
+            lp->tail.fetch_add(1);
+            sprintf(partition_name, "%s/part_%d", lp->directory_path, part_counter.fetch_add(1));
+            lomo_flush_memtable(mt, partition_name);
+            lomo_free_memtable(mt);
+        }
+    }
+}
+
+LomoIngestPipeline* lomo_init_pipeline(int num_threads, const char* directory_path, uint32_t column_count, const LomoColumnType* types) {
+    LomoIngestPipeline* lp = new LomoIngestPipeline();
+    lp->head.store(0);
+    lp->tail.store(0);
+    lp->running.store(true);
+    lp->directory_path = _strdup(directory_path);
+#ifdef _WIN32
+    _mkdir(lp->directory_path);
+#else
+    mkdir(lp->directory_path, 0777);
+#endif
+    lp->column_count = column_count;
+    lp->types = (LomoColumnType*)malloc(column_count * sizeof(LomoColumnType));
+    memcpy(lp->types, types, column_count * sizeof(LomoColumnType));
+
+    for (int i = 0; i < LOMO_PIPELINE_CAPACITY; i++) lp->queue[i].store(nullptr);
+
+    for (int i = 0; i < num_threads; i++) {
+        lp->workers.emplace_back(lomo_flusher_worker, lp);
+    }
+
+    printf("[LoMo Pipeline] Initialized with %d workers. Target: %s\n", num_threads, directory_path);
+    return lp;
+}
+
+void lomo_pipeline_submit(LomoIngestPipeline* lp, LomoMemTable* mt) {
+    while (true) {
+        size_t h = lp->head.load();
+        if (h - lp->tail.load() >= LOMO_PIPELINE_CAPACITY) {
+            std::this_thread::yield(); // Queue full
+            continue;
+        }
+        LomoMemTable* expected = nullptr;
+        if (lp->queue[h % LOMO_PIPELINE_CAPACITY].compare_exchange_strong(expected, mt)) {
+            lp->head.fetch_add(1);
+            break;
+        }
+    }
+}
+
+void lomo_shutdown_pipeline(LomoIngestPipeline* lp) {
+    lp->running.store(false);
+    lp->workers.clear(); // std::jthread joins automatically
+    free(lp->directory_path);
+    free(lp->types);
+    delete lp;
+    printf("[LoMo Pipeline] Shutdown complete.\n");
+}
+
+// --- Snapshot System ---
 
 int lomo_save_memtable_snapshot(const LomoMemTable* mt, const char* file_path) {
     if (!mt || !file_path) return -1;

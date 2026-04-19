@@ -23,9 +23,6 @@ typedef struct {
     size_t* column_capacities; // Allocated capacity (in bytes) of each column buffer
     uint32_t row_count;
     uint32_t max_rows;
-    // We'll wrap the mutex in a struct or handle for C compatibility if needed, 
-    // but since we are migrating core to C++, we can use std::mutex directly if we rename ingestor.h or use opaque pointers.
-    // For now, let's use a void* for the lock to keep the header semi-C-compatible for other tools.
     void* lock_handle;            
 } LomoMemTable;
 
@@ -33,6 +30,28 @@ LomoMemTable* lomo_init_memtable(uint32_t column_count, const LomoColumnType* ty
 int lomo_ingest_row(LomoMemTable* mt, const void** column_data, const size_t* column_sizes);
 int lomo_flush_memtable(LomoMemTable* mt, const char* directory_path);
 void lomo_free_memtable(LomoMemTable* mt);
+
+// --- Phase 2: Ingestion Pipeline ---
+
+typedef struct LomoIngestPipeline LomoIngestPipeline;
+
+/**
+ * @brief Initializes a multi-threaded ingestion pipeline.
+ * @param num_flusher_threads Number of background flusher threads to spawn.
+ * @param directory_path Path where flushed parts will be stored.
+ * @return Handle to the initialized pipeline.
+ */
+LomoIngestPipeline* lomo_init_pipeline(int num_flusher_threads, const char* directory_path, uint32_t column_count, const LomoColumnType* types);
+
+/**
+ * @brief Submits a full MemTable to the background flusher queue.
+ */
+void lomo_pipeline_submit(LomoIngestPipeline* lp, LomoMemTable* mt);
+
+/**
+ * @brief Shuts down the pipeline, waiting for all background flushes to complete.
+ */
+void lomo_shutdown_pipeline(LomoIngestPipeline* lp);
 
 // Phase 6: Snapshot System
 int lomo_save_memtable_snapshot(const LomoMemTable* mt, const char* file_path);

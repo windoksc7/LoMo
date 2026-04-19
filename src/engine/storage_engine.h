@@ -21,7 +21,8 @@ typedef enum {
 typedef enum {
     LOMO_COMPRESS_NONE = 0,
     LOMO_COMPRESS_XPRESS = 1,
-    LOMO_COMPRESS_LZ4 = 2
+    LOMO_COMPRESS_LZ4 = 2,
+    LOMO_COMPRESS_DELTA_LZ4 = 3 // Phase 2: High-efficiency for sequential data
 } LomoCompressionType;
 
 // 3. Column Metadata
@@ -41,6 +42,12 @@ typedef struct {
 typedef struct {
     uint64_t min_timestamp;   // Range info (Primary index only, or redundant for others)
     uint64_t max_timestamp;
+    
+    // Phase 2: Advanced Storage Extensions
+    int64_t min_val;          // Min value in granule for pushdown filtering
+    int64_t max_val;          // Max value in granule for pushdown filtering
+    int64_t base_value;       // Base value for Delta encoding/decoding
+    
     uint64_t start_offset;    // Physical byte offset in its specific .col file
     uint32_t compressed_size; // Size on disk (uncompressed_size if no compression)
     uint32_t uncompressed_size;
@@ -70,7 +77,6 @@ extern "C" {
 LomoPartHeader* lomo_init_part(uint32_t column_count);
 
 // Append a block of data to a specific column
-// This will be used during the ingestion phase before sorting/flushing.
 int lomo_write_column_chunk(LomoPartHeader* part, uint32_t column_id, const void* data_ptr, size_t size);
 
 // Read a block of column data into an AVX2/SIMD aligned buffer
@@ -79,7 +85,7 @@ int lomo_read_column_chunk_simd(const LomoPartHeader* part, uint32_t column_id, 
 // Read the entire column into an AVX2/SIMD aligned buffer
 int lomo_read_column_simd(const LomoPartHeader* part, uint32_t column_id, void* aligned_buffer, size_t buffer_size);
 
-// Flush the MemTable to disk, applying ZSTD/LZ4 compression, creating sparse indexes, and writing the header.
+// Flush the MemTable to disk, applying Delta + LZ4 compression, creating sparse indexes, and writing the header.
 int lomo_flush_part(LomoPartHeader* part, const char* directory_path, void** column_buffers, size_t* column_sizes);
 #define LOMO_GRANULE_ROWS 8192 // 8192 for production throughput
 
