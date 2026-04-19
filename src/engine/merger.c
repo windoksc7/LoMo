@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include <malloc.h>
+#include "lomo_os.h"
 
 #ifdef _WIN32
 #include <direct.h>
@@ -52,7 +52,7 @@ int lomo_merge_parts(const char** part_paths, uint32_t part_count, const char* o
 
         for (uint32_t c = 0; c < column_count; c++) {
             p_sizes[c] = (size_t)h->columns[c].uncompressed_size;
-            p_bufs[c] = _aligned_malloc(p_sizes[c], 32);
+            p_bufs[c] = lomo_aligned_malloc(p_sizes[c], 32);
             
             // Read entire column (handles decompression for primary column)
             lomo_read_column_simd(h, c, p_bufs[c], p_sizes[c]);
@@ -80,7 +80,7 @@ int lomo_merge_parts(const char** part_paths, uint32_t part_count, const char* o
         }
 
         // Clean up part buffers
-        for (uint32_t c = 0; c < column_count; c++) _aligned_free(p_bufs[c]);
+        for (uint32_t c = 0; c < column_count; c++) lomo_aligned_free(p_bufs[c]);
         free(p_bufs);
         free(p_sizes);
         free(col_offsets);

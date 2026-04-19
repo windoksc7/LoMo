@@ -2,6 +2,7 @@
 #define LOMO_INGESTOR_H
 
 #include "storage_engine.h"
+#include "lomo_os.h"
 
 #define LOMO_MEMTABLE_MAX_ROWS 1048576 // 1M rows for MVP
 #define LOMO_FLUSH_THRESHOLD_MB 256
@@ -14,6 +15,7 @@ typedef struct {
     size_t* column_capacities; // Allocated capacity (in bytes) of each column buffer
     uint32_t row_count;
     uint32_t max_rows;
+    LomoMutex lock;            // Phase 6: Mutex-guarded MemTable
 } LomoMemTable;
 
 // Initialize a new MemTable
@@ -27,5 +29,9 @@ int lomo_flush_memtable(LomoMemTable* mt, const char* directory_path);
 
 // Free all resources used by the MemTable
 void lomo_free_memtable(LomoMemTable* mt);
+
+// Phase 6: Snapshot System
+int lomo_save_memtable_snapshot(const LomoMemTable* mt, const char* file_path);
+LomoMemTable* lomo_load_memtable_snapshot(const char* file_path);
 
 #endif // LOMO_INGESTOR_H

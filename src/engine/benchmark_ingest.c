@@ -14,7 +14,7 @@ int main() {
         return 1;
     }
 
-    LomoColumnType types[] = { LOMO_TYPE_TIMESTAMP, LOMO_TYPE_INT64, LOMO_TYPE_STRING };
+    LomoColumnType types[] = { LOMO_TYPE_TIMESTAMP, LOMO_TYPE_STRING, LOMO_TYPE_INT64 };
     LomoMemTable* mt = lomo_init_memtable(3, types);
     mt->max_rows = 25000000; // Increase for 1GB test
 
@@ -38,8 +38,8 @@ int main() {
         uint64_t ts = (uint64_t)time(NULL); // Simplified
         int64_t status = 200; // Simplified
         
-        const void* data[] = { &ts, &status, line };
-        size_t sizes[] = { 8, 8, len };
+        const void* data[] = { &ts, line, &status };
+        size_t sizes[] = { 8, len, 8 };
         
         lomo_ingest_row(mt, data, sizes);
         count++;

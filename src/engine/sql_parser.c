@@ -1,10 +1,10 @@
+#include "lomo_os.h"
 #include "sql_parser.h"
 #include "simd_filter.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
-#include <malloc.h>
 
 // Simple tokenizer helpers
 static const char* skip_ws(const char* s) { while(*s && isspace(*s)) s++; return s; }
@@ -87,7 +87,7 @@ static void lomo_apply_filters(const LomoQueryPlan* plan, const LomoPartHeader* 
         if (cid >= part->column_count) continue;
 
         size_t col_size = (size_t)part->columns[cid].uncompressed_size;
-        void* buffer = _aligned_malloc(col_size, 32);
+        void* buffer = lomo_aligned_malloc(col_size, 32);
         if (!buffer) continue;
         
         if (lomo_read_column_simd(part, cid, buffer, col_size) == 0) {
@@ -107,7 +107,7 @@ static void lomo_apply_filters(const LomoQueryPlan* plan, const LomoPartHeader* 
                 }
             }
         }
-        _aligned_free(buffer);
+        lomo_aligned_free(buffer);
     }
 }
 
@@ -121,13 +121,13 @@ static void lomo_run_aggregations(const LomoQueryPlan* plan, const LomoPartHeade
             if (cid >= part->column_count) continue;
 
             size_t sz = (size_t)part->columns[cid].uncompressed_size;
-            int64_t* buf = (int64_t*)_aligned_malloc(sz, 32);
+            int64_t* buf = (int64_t*)lomo_aligned_malloc(sz, 32);
             if (buf) {
                 if (lomo_read_column_simd(part, cid, buf, sz) == 0) {
                     int64_t result = lomo_simd_sum_int64_masked(buf, total_rows, mask);
                     printf("RESULT SUM(col %u): %lld\n", cid, (long long)result);
                 }
-                _aligned_free(buf);
+                lomo_aligned_free(buf);
             }
         } else if (strcmp(plan->aggs[i].func, "COUNT") == 0) {
             uint64_t count = 0;

@@ -5,6 +5,7 @@
 #include <string.h>
 #include <time.h>
 #include <inttypes.h>
+#include "lomo_os.h"
 
 #if defined(__x86_64__) || defined(_M_X64)
     #include <immintrin.h> // Intel/AMD용 AVX2
@@ -12,46 +13,11 @@
     #include <arm_neon.h>  // Apple/ARM용 NEON
 #endif
 
-#if defined(_WIN32)
-    // Windows: CreateFileMapping, MapViewOfFile
-    #include <windows.h>
-    #include <intrin.h>
-#else
-    // macOS & Linux: mmap, POSIX 표준
-    #include <sys/mman.h>
-    #include <sys/stat.h>
-    #include <fcntl.h>
-    #include <unistd.h>
-    #define __popcnt __builtin_popcount
-#endif
-
-typedef struct {
-    const char* data;
-    size_t size;
-#if defined(_WIN32)
-    HANDLE hFile;
-    HANDLE hMapping;
-#else
-    int fd;
-#endif
-} MappedFile;
+typedef LomoMappedFile MappedFile;
 
 void unmap_file(MappedFile* mf) {
     if (!mf) return;
-
-#if defined(_WIN32)
-    if (mf->data) UnmapViewOfFile(mf->data);
-    if (mf->hMapping) CloseHandle(mf->hMapping);
-    if (mf->hFile) CloseHandle(mf->hFile);
-#else
-    // 리눅스/맥: 구조체에 담아뒀던 mf->fd를 여기서 사용합니다!
-    if (mf->data && mf->data != MAP_FAILED) {
-        munmap((void *)mf->data, mf->size); 
-    }
-    if (mf->fd >= 0) {
-        close(mf->fd); // 드디어 fd를 닫습니다.
-    }
-#endif
+    lomo_mmap_close(mf);
     free(mf); // 마지막으로 구조체 자체를 메모리에서 해제
 }
 
@@ -60,29 +26,8 @@ MappedFile* map_file_to_memory(const char* filename) {
     MappedFile* mf = (MappedFile*)malloc(sizeof(MappedFile));
     if (!mf) return NULL;
 
-#if defined(_WIN32)
-    mf->hFile = CreateFileA(filename, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (mf->hFile == INVALID_HANDLE_VALUE) { free(mf); return NULL; }
-    
-    LARGE_INTEGER li;
-    GetFileSizeEx(mf->hFile, &li);
-    mf->size = (size_t)li.QuadPart;
-    
-    mf->hMapping = CreateFileMapping(mf->hFile, NULL, PAGE_READONLY, 0, 0, NULL);
-    mf->data = (const char*)MapViewOfFile(mf->hMapping, FILE_MAP_READ, 0, 0, 0);
-#else
-    mf->fd = open(filename, O_RDONLY);
-    if (mf->fd == -1) { free(mf); return NULL; }
-    
-    struct stat st;
-    fstat(mf->fd, &st);
-    mf->size = (size_t)st.st_size;
-    
-    mf->data = (const char*)mmap(NULL, mf->size, PROT_READ, MAP_PRIVATE, mf->fd, 0);
-#endif
-
-    if (!mf->data) {
-        // 에러 발생 시 정리 로직...
+    if (!lomo_mmap_open(filename, mf)) {
+        free(mf);
         return NULL;
     }
     return mf;

@@ -26,6 +26,7 @@ typedef enum {
 // 3. Column Metadata
 typedef struct {
     uint32_t column_id;
+    uint32_t schema_version;  // Phase 6: Schema Evolution support
     LomoColumnType type;
     LomoCompressionType compression;
     uint64_t offset;          
@@ -35,11 +36,12 @@ typedef struct {
 } LomoColumnMeta;
 
 // 4. Sparse Index for fast skipping
+// Layout: Flattened array [Column 0 Granules][Column 1 Granules]...
 typedef struct {
-    uint64_t min_timestamp;
+    uint64_t min_timestamp;   // Range info (Primary index only, or redundant for others)
     uint64_t max_timestamp;
-    uint64_t start_offset;    // Physical byte offset in .col file
-    uint32_t compressed_size; // Size on disk
+    uint64_t start_offset;    // Physical byte offset in its specific .col file
+    uint32_t compressed_size; // Size on disk (uncompressed_size if no compression)
     uint32_t uncompressed_size;
     uint32_t row_count;       
 } LomoSparseIndexGranule;
