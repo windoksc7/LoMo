@@ -120,6 +120,13 @@ add_executable(lomo_sql
 )
 target_link_libraries(lomo_sql ${PLATFORM_LIBS} lz4_static)
 
+add_executable(benchmark_ingest
+    src/engine/benchmark_ingest.c
+    src/engine/ingestor.c
+    ${ENGINE_COMMON_SRC}
+)
+target_link_libraries(benchmark_ingest ${PLATFORM_LIBS} lz4_static)
+
 # LoMo UI (Dear ImGui)
 set(IMGUI_SRC
     ${imgui_SOURCE_DIR}/imgui.cpp
