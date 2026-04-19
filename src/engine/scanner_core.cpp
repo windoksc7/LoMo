@@ -66,7 +66,7 @@ int main() {
             continue;
         }
 
-        run_analysis(logFile->data, logFile->size);
+        run_analysis((const char*)logFile->data, logFile->size);
         unmap_file(logFile);
     }
 

@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <mutex>
 #include "lomo_os.h"
 
 typedef struct {
@@ -16,7 +17,6 @@ static int compare_multi(const void* a, const void* b) {
     uint32_t ia = *(const uint32_t*)a;
     uint32_t ib = *(const uint32_t*)b;
     
-    // 1. Symbol Comparison
     const uint8_t* sa = g_ctx.symbols + g_ctx.sym_offsets[ia];
     const uint8_t* sb = g_ctx.symbols + g_ctx.sym_offsets[ib];
     uint64_t lena = *(uint64_t*)sa;
@@ -27,7 +27,6 @@ static int compare_multi(const void* a, const void* b) {
     if (lena < lenb) return -1;
     if (lena > lenb) return 1;
 
-    // 2. Timestamp Comparison
     if (g_ctx.ts[ia] < g_ctx.ts[ib]) return -1;
     if (g_ctx.ts[ia] > g_ctx.ts[ib]) return 1;
     return 0;
@@ -45,18 +44,18 @@ LomoMemTable* lomo_init_memtable(uint32_t column_count, const LomoColumnType* ty
         mt->column_capacities[i] = 1024 * 1024;
         mt->column_buffers[i] = lomo_aligned_malloc(mt->column_capacities[i], 4096);
     }
-    lomo_mutex_init(&mt->lock);
+    mt->lock_handle = new std::mutex();
     return mt;
 }
 
 int lomo_ingest_row(LomoMemTable* mt, const void** column_data, const size_t* column_sizes) {
     if (!mt) return -1;
-    lomo_mutex_lock(&mt->lock);
+    std::mutex* m = (std::mutex*)mt->lock_handle;
+    std::lock_guard<std::mutex> lock(*m);
+
     if (mt->row_count >= mt->max_rows) {
-        lomo_mutex_unlock(&mt->lock);
         return -1;
     }
-    size_t total = 0;
     for (uint32_t i = 0; i < mt->column_count; i++) {
         size_t sz = column_sizes[i];
         size_t st = (mt->types[i] == LOMO_TYPE_STRING) ? (sz + 8) : sz;
@@ -70,21 +69,24 @@ int lomo_ingest_row(LomoMemTable* mt, const void** column_data, const size_t* co
         if (mt->types[i] == LOMO_TYPE_STRING) {
             uint64_t off = (uint64_t)sz; memcpy(dst, &off, 8); memcpy(dst + 8, column_data[i], sz);
         } else memcpy(dst, column_data[i], sz);
-        mt->column_sizes[i] += st; total += mt->column_sizes[i];
+        mt->column_sizes[i] += st;
     }
     mt->row_count++; 
-    lomo_mutex_unlock(&mt->lock);
     return 0;
 }
 
 int lomo_flush_memtable(LomoMemTable* mt, const char* directory_path) {
     if (!mt || mt->row_count == 0) return 0;
+    
+    // We lock during flush to ensure consistency if another thread tries to ingest
+    std::mutex* m = (std::mutex*)mt->lock_handle;
+    std::lock_guard<std::mutex> lock(*m);
+
     uint32_t* idxs = (uint32_t*)malloc(mt->row_count * 4);
     for (uint32_t i = 0; i < mt->row_count; i++) idxs[i] = i;
 
-    // Prepare context for [Symbol, TS] sorting
     g_ctx.ts = (const uint64_t*)mt->column_buffers[0];
-    g_ctx.symbols = (const uint8_t*)mt->column_buffers[1]; // Column 1 is Symbol
+    g_ctx.symbols = (const uint8_t*)mt->column_buffers[1]; 
     size_t* sym_offs = (size_t*)malloc(mt->row_count * sizeof(size_t));
     size_t scan = 0;
     for (uint32_t r = 0; r < mt->row_count; r++) {
@@ -128,7 +130,9 @@ int lomo_flush_memtable(LomoMemTable* mt, const char* directory_path) {
 
 void lomo_free_memtable(LomoMemTable* mt) {
     if (!mt) return;
-    lomo_mutex_destroy(&mt->lock);
+    if (mt->lock_handle) {
+        delete (std::mutex*)mt->lock_handle;
+    }
     for (uint32_t i = 0; i < mt->column_count; i++) lomo_aligned_free(mt->column_buffers[i]);
     free(mt->column_buffers); free(mt->column_sizes); free(mt->column_capacities); free(mt->types); free(mt);
 }

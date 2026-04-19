@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <mutex>
+#include <thread>
 #include "lomo_os.h"
 
 #ifdef _WIN32
@@ -24,13 +26,16 @@ LomoPartHeader* lomo_init_part(uint32_t column_count) {
     part->columns = (column_count > 0) ? (LomoColumnMeta*)calloc(column_count, sizeof(LomoColumnMeta)) : NULL;
     if (part->columns) {
         for (uint32_t i = 0; i < column_count; i++) {
-            part->columns[i].schema_version = 1; // Default schema version
+            part->columns[i].schema_version = 1; 
         }
     }
     return part;
 }
 
-int lomo_write_column_chunk(LomoPartHeader* part, uint32_t column_id, const void* data_ptr, size_t size) { return 0; }
+int lomo_write_column_chunk(LomoPartHeader* part, uint32_t column_id, const void* data_ptr, size_t size) { 
+    (void)part; (void)column_id; (void)data_ptr; (void)size;
+    return 0; 
+}
 
 int lomo_read_column_chunk_simd(const LomoPartHeader* part, uint32_t column_id, uint64_t granule_idx, void* aligned_buffer, size_t buffer_size) {
     if (!part || !part->index || column_id >= part->column_count || granule_idx >= part->granule_count) return -1;
@@ -50,7 +55,9 @@ int lomo_read_column_chunk_simd(const LomoPartHeader* part, uint32_t column_id, 
             lomo_decompress(decompressor, comp_buf, g->compressed_size, aligned_buffer, buffer_size, &decomp_size);
             free(comp_buf); lomo_decompressor_close(decompressor);
         }
-    } else fread(aligned_buffer, 1, g->uncompressed_size, fp);
+    } else {
+        fread(aligned_buffer, 1, (g->uncompressed_size < buffer_size) ? g->uncompressed_size : buffer_size, fp);
+    }
     fclose(fp); return 0;
 }
 
@@ -123,17 +130,24 @@ int lomo_flush_part(LomoPartHeader* part, const char* directory_path, void** col
             size_t uncomp_size = 0, src_offset = 0;
 
             if (part->columns[c].type == LOMO_TYPE_STRING) {
-                uint8_t* p = col_base; for(uint32_t r=0; r<start_row; r++) p += (8 + *(uint64_t*)p);
+                uint8_t* p = col_base; for(uint32_t r=0; r<start_row; r++) {
+                    p += (8 + *(uint64_t*)p);
+                }
                 src_offset = p - col_base; uint8_t* start_p = p;
-                for(uint32_t r=0; r<rows_in_g; r++) p += (8 + *(uint64_t*)p);
+                for(uint32_t r=0; r<rows_in_g; r++) {
+                    p += (8 + *(uint64_t*)p);
+                }
                 uncomp_size = p - start_p;
             } else {
-                size_t row_sz = column_sizes[c] / part->total_rows;
+                // Fixed-size columns (INT64, TIMESTAMP, ENUM)
+                size_t row_sz = 8; // Default for our current types
+                if (part->columns[c].type == LOMO_TYPE_INT64 || part->columns[c].type == LOMO_TYPE_TIMESTAMP || part->columns[c].type == LOMO_TYPE_ENUM) {
+                    row_sz = 8;
+                }
                 src_offset = (size_t)start_row * row_sz; uncomp_size = (size_t)rows_in_g * row_sz;
             }
 
             LomoSparseIndexGranule* g_meta = LOMO_GET_GRANULE(part, c, g);
-            // Using 4KB alignment for O_DIRECT compatibility
             void* comp_buf = lomo_aligned_malloc(uncomp_size + 4096, 4096);
             size_t comp_size = 0;
             int ok = lomo_compress(compressor, col_base + src_offset, uncomp_size, comp_buf, uncomp_size + 1024, &comp_size);
@@ -207,4 +221,10 @@ uint32_t* lomo_filter_granules_by_time(const LomoPartHeader* part, uint64_t min_
     *out_count = count; return matched;
 }
 
-void lomo_free_part(LomoPartHeader* part) { if (!part) return; if (part->columns) free(part->columns); if (part->index) free(part->index); if (part->directory_path) free(part->directory_path); free(part); }
+void lomo_free_part(LomoPartHeader* part) { 
+    if (!part) return; 
+    if (part->columns) free(part->columns); 
+    if (part->index) free(part->index); 
+    if (part->directory_path) free(part->directory_path); 
+    free(part); 
+}

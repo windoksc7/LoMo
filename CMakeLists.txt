@@ -11,7 +11,7 @@ endif()
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(FetchContent)
@@ -47,13 +47,13 @@ FetchContent_MakeAvailable(lz4 glfw imgui)
 # Platform-specific configurations
 if(WIN32)
     add_definitions(-D_CRT_SECURE_NO_WARNINGS)
-    set(HAL_SRC src/engine/os_win.c)
+    set(HAL_SRC src/engine/os_win.cpp)
     set(PLATFORM_LIBS Cabinet.lib dwmapi.lib imm32.lib)
 elseif(APPLE)
-    set(HAL_SRC src/engine/os_posix.c)
+    set(HAL_SRC src/engine/os_posix.cpp)
     set(PLATFORM_LIBS pthread "-framework Cocoa" "-framework IOKit" "-framework CoreVideo")
 else()
-    set(HAL_SRC src/engine/os_posix.c)
+    set(HAL_SRC src/engine/os_posix.cpp)
     set(PLATFORM_LIBS pthread dl)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         list(APPEND PLATFORM_LIBS uring)
@@ -71,58 +71,58 @@ include_directories(${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
 
 # Common engine sources
 set(ENGINE_COMMON_SRC
-    src/engine/storage_engine.c
-    src/engine/simd_filter.c
+    src/engine/storage_engine.cpp
+    src/engine/simd_filter.cpp
     ${HAL_SRC}
 )
 
 # Executables
 add_executable(lomo_cli
-    src/engine/engine_main.c
-    src/engine/ingestor.c
-    src/engine/sql_parser.c
+    src/engine/engine_main.cpp
+    src/engine/ingestor.cpp
+    src/engine/sql_parser.cpp
     ${ENGINE_COMMON_SRC}
 )
 target_link_libraries(lomo_cli ${PLATFORM_LIBS} lz4_static)
 
 add_executable(scanner
-    src/engine/scanner_core.c
-    src/engine/ingestor.c
+    src/engine/scanner_core.cpp
+    src/engine/ingestor.cpp
     ${ENGINE_COMMON_SRC}
 )
 target_link_libraries(scanner ${PLATFORM_LIBS} lz4_static)
 
 add_executable(test_ingest
-    src/engine/test_ingestion.c
-    src/engine/ingestor.c
+    src/engine/test_ingestion.cpp
+    src/engine/ingestor.cpp
     ${ENGINE_COMMON_SRC}
 )
 target_link_libraries(test_ingest ${PLATFORM_LIBS} lz4_static)
 
 add_executable(query_lomo
-    src/engine/query_engine.c
+    src/engine/query_engine.cpp
     ${ENGINE_COMMON_SRC}
 )
 target_link_libraries(query_lomo ${PLATFORM_LIBS} lz4_static)
 
 add_executable(test_merge
-    src/engine/test_merge.c
-    src/engine/ingestor.c
-    src/engine/merger.c
+    src/engine/test_merge.cpp
+    src/engine/ingestor.cpp
+    src/engine/merger.cpp
     ${ENGINE_COMMON_SRC}
 )
 target_link_libraries(test_merge ${PLATFORM_LIBS} lz4_static)
 
 add_executable(lomo_sql
-    src/engine/test_sql.c
-    src/engine/sql_parser.c
+    src/engine/test_sql.cpp
+    src/engine/sql_parser.cpp
     ${ENGINE_COMMON_SRC}
 )
 target_link_libraries(lomo_sql ${PLATFORM_LIBS} lz4_static)
 
 add_executable(benchmark_ingest
-    src/engine/benchmark_ingest.c
-    src/engine/ingestor.c
+    src/engine/benchmark_ingest.cpp
+    src/engine/ingestor.cpp
     ${ENGINE_COMMON_SRC}
 )
 target_link_libraries(benchmark_ingest ${PLATFORM_LIBS} lz4_static)
@@ -141,7 +141,7 @@ add_executable(lomo_ui
     src/ui/ui_main.cpp 
     src/ui/ui_render.cpp
     src/ui/document.c
-    src/ui/editor.c
+    src/ui/editor.cpp
     ${IMGUI_SRC} 
     ${ENGINE_COMMON_SRC}
 )

@@ -26,41 +26,44 @@ double get_time() {
 
 int main() {
     const char* filename = "dummy_web.log";
-    FILE* fp = fopen(filename, "r");
-    if (!fp) {
-        printf("Failed to open %s\n", filename);
-        return 1;
-    }
-
+    
     LomoColumnType types[] = { LOMO_TYPE_TIMESTAMP, LOMO_TYPE_STRING, LOMO_TYPE_INT64 };
     LomoMemTable* mt = lomo_init_memtable(3, types);
-    mt->max_rows = 25000000; // Increase for 1GB test
+    uint32_t target_rows = 5000000; 
+    mt->max_rows = target_rows + 1000; 
 
     char line[512];
     uint64_t count = 0;
     uint64_t total_bytes = 0;
 
-    printf("[LoMo Benchmark] Starting ingestion of %s...\n", filename);
+    printf("[LoMo Benchmark] Starting multi-pass ingestion to reach %u rows...\n", target_rows);
     
     double start_ingest = get_time();
 
-    while (fgets(line, sizeof(line), fp)) {
-        size_t len = strlen(line);
-        total_bytes += len;
-        
-        // Very basic parsing for benchmark
-        uint64_t ts = (uint64_t)time(NULL); 
-        int64_t status = 200; 
-        
-        const void* data[] = { &ts, line, &status };
-        size_t sizes[] = { 8, len, 8 };
-        
-        lomo_ingest_row(mt, data, sizes);
-        count++;
-
-        if (count % 1000000 == 0) {
-            printf("Ingested %llu rows...\n", count);
+    while (count < target_rows) {
+        FILE* fp = fopen(filename, "r");
+        if (!fp) {
+            printf("Failed to open %s\n", filename);
+            break;
         }
+        while (fgets(line, sizeof(line), fp) && count < target_rows) {
+            size_t len = strlen(line);
+            total_bytes += len;
+            
+            uint64_t ts = (uint64_t)time(NULL) + count; 
+            int64_t status = 200; 
+            
+            const void* data[] = { &ts, line, &status };
+            size_t sizes[] = { 8, len, 8 };
+            
+            lomo_ingest_row(mt, data, sizes);
+            count++;
+
+            if (count % 1000000 == 0) {
+                printf("Ingested %llu rows...\n", count);
+            }
+        }
+        fclose(fp);
     }
 
     double end_ingest = get_time();
@@ -80,6 +83,5 @@ int main() {
            elapsed_ingest + elapsed_flush, (total_bytes / 1024.0 / 1024.0) / (elapsed_ingest + elapsed_flush));
 
     lomo_free_memtable(mt);
-    fclose(fp);
     return 0;
 }
