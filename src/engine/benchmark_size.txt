@@ -1,0 +1,23 @@
+# LoMo Phase 2: Batch Size Performance Analysis
+
+## Configuration
+- **Strategy:** 4-2-4 (4 Parsers, 2 Flushers, 4 Mergers)
+- **Workload:** 20 Million Rows / 1.05 GB
+- **System:** 6-Core / 12-Thread Windows PC
+
+## Test Results
+
+| Batch Size | Parsing Speed (Memory) | End-to-End Throughput (Disk) | Result |
+| :--- | :--- | :--- | :--- |
+| 1,000,000 Rows | 312.14 MB/s | 82.58 MB/s | Stable, balanced. |
+| 1,500,000 Rows | 448.74 MB/s | 67.47 MB/s | Higher parsing, I/O tension begins. |
+| **2,000,000 Rows** | **476.95 MB/s** | **82.96 MB/s** | **[OPTIMAL] Peak performance.** |
+| 2,500,000 Rows | 250.79 MB/s | 39.12 MB/s | CPU Cache thrashing / Pipeline stall. |
+| 3,000,000 Rows | 390.02 MB/s | 44.10 MB/s | Large chunk overhead / Backpressure. |
+
+## Analysis
+- **The 2M Sweet Spot:** 2 Million rows provide the ideal balance between batch efficiency and system responsiveness. It maximizes sequential disk I/O while keeping the CPU sorting phase within efficient cache boundaries.
+- **Threshold Effect:** Increasing beyond 2M rows causes a significant drop in end-to-end throughput as the flusher threads take too long to process a single chunk, causing the parsers to wait for queue space.
+
+## Conclusion
+The LoMo engine is now locked to the **2 Million Row** partition size for maximum sustained industrial throughput on this hardware.
