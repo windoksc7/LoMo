@@ -8,7 +8,7 @@
 #include <atomic>
 #include <thread>
 
-#define LOMO_MEMTABLE_MAX_ROWS 1048576 // 1M rows for MVP
+#define LOMO_MEMTABLE_MAX_ROWS 2097152 // 2M rows: The optimal Sweet Spot
 #define LOMO_FLUSH_THRESHOLD_MB 256
 
 #ifdef __cplusplus
@@ -28,6 +28,7 @@ typedef struct {
 
 LomoMemTable* lomo_init_memtable(uint32_t column_count, const LomoColumnType* types);
 int lomo_ingest_row(LomoMemTable* mt, const void** column_data, const size_t* column_sizes);
+int lomo_ingest_row_fast(LomoMemTable* mt, const void** column_data, const size_t* column_sizes);
 int lomo_flush_memtable(LomoMemTable* mt, const char* directory_path);
 void lomo_free_memtable(LomoMemTable* mt);
 

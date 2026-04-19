@@ -74,13 +74,13 @@ set(ENGINE_COMMON_SRC
     src/engine/storage_engine.cpp
     src/engine/simd_filter.cpp
     src/engine/merger.cpp
+    src/engine/ingestor.cpp
     ${HAL_SRC}
 )
 
 # Executables
 add_executable(lomo_cli
     src/engine/engine_main.cpp
-    src/engine/ingestor.cpp
     src/engine/sql_parser.cpp
     ${ENGINE_COMMON_SRC}
 )
@@ -88,14 +88,12 @@ target_link_libraries(lomo_cli ${PLATFORM_LIBS} lz4_static)
 
 add_executable(scanner
     src/engine/scanner_core.cpp
-    src/engine/ingestor.cpp
     ${ENGINE_COMMON_SRC}
 )
 target_link_libraries(scanner ${PLATFORM_LIBS} lz4_static)
 
 add_executable(test_ingest
     src/engine/test_ingestion.cpp
-    src/engine/ingestor.cpp
     ${ENGINE_COMMON_SRC}
 )
 target_link_libraries(test_ingest ${PLATFORM_LIBS} lz4_static)
@@ -108,8 +106,6 @@ target_link_libraries(query_lomo ${PLATFORM_LIBS} lz4_static)
 
 add_executable(test_merge
     src/engine/test_merge.cpp
-    src/engine/ingestor.cpp
-    src/engine/merger.cpp
     ${ENGINE_COMMON_SRC}
 )
 target_link_libraries(test_merge ${PLATFORM_LIBS} lz4_static)
@@ -123,7 +119,6 @@ target_link_libraries(lomo_sql ${PLATFORM_LIBS} lz4_static)
 
 add_executable(benchmark_ingest
     src/engine/benchmark_ingest.cpp
-    src/engine/ingestor.cpp
     ${ENGINE_COMMON_SRC}
 )
 target_link_libraries(benchmark_ingest ${PLATFORM_LIBS} lz4_static)

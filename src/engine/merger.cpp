@@ -102,49 +102,77 @@ int lomo_merge_parts(const char** part_paths, uint32_t part_count, const char* o
 
 struct LomoMergerDaemon {
     std::atomic<bool> running;
-    std::jthread worker;
+    std::vector<std::jthread> workers;
     std::string watch_dir;
     std::string output_dir;
+    std::mutex scan_mutex; // Protects directory scanning
 };
 
 void lomo_merger_worker_loop(LomoMergerDaemon* daemon) {
-    int merged_count = 0;
+    static std::atomic<int> merged_count{0};
     while (daemon->running) {
         std::vector<std::string> parts_to_merge;
-        try {
-            if (fs::exists(daemon->watch_dir)) {
-                for (const auto& entry : fs::directory_iterator(daemon->watch_dir)) {
-                    if (entry.is_directory()) {
-                        // Check if it's a valid part (has header.bin)
-                        if (fs::exists(entry.path() / "header.bin")) {
-                            parts_to_merge.push_back(entry.path().string());
+        {
+            std::lock_guard<std::mutex> lock(daemon->scan_mutex);
+            try {
+                if (fs::exists(daemon->watch_dir)) {
+                    for (const auto& entry : fs::directory_iterator(daemon->watch_dir)) {
+                        if (entry.is_directory()) {
+                            std::string path_str = entry.path().string();
+                            // Simple way to claim: rename to .busy
+                            if (fs::exists(entry.path() / "header.bin") && path_str.find(".busy") == std::string::npos) {
+                                std::string busy_path = path_str + ".busy";
+                                try {
+                                    fs::rename(entry.path(), busy_path);
+                                    parts_to_merge.push_back(busy_path);
+                                } catch (...) {}
+                            }
                         }
+                        if (parts_to_merge.size() >= 10) break; 
                     }
-                    if (parts_to_merge.size() >= 5) break; 
                 }
-            }
-        } catch (...) {}
+            } catch (...) {}
+        }
 
-        if (parts_to_merge.size() >= 5) {
+        if (parts_to_merge.size() >= 10) {
             char merged_path[512];
-            sprintf(merged_path, "%s/merged_%d", daemon->output_dir.c_str(), merged_count++);
-            
+            sprintf(merged_path, "%s/merged_%d", daemon->output_dir.c_str(), merged_count.fetch_add(1));
+
             std::vector<const char*> paths;
             for (const auto& p : parts_to_merge) paths.push_back(p.c_str());
 
             printf("[LoMo Daemon] Background merge starting for %u parts...\n", (uint32_t)paths.size());
             if (lomo_merge_parts(paths.data(), (uint32_t)paths.size(), merged_path) == 0) {
-                // Cleanup originals
                 for (const auto& p : parts_to_merge) {
                     try { fs::remove_all(p); } catch (...) {}
                 }
-                printf("[LoMo Daemon] Merge successful. Cleaned up %u small parts.\n", (uint32_t)parts_to_merge.size());
+                printf("[LoMo Daemon] Merge successful. Cleaned up %u parts.\n", (uint32_t)parts_to_merge.size());
+            } else {
+                // If merge failed, rename back
+                for (const auto& p : parts_to_merge) {
+                    try { 
+                        std::string orig = p;
+                        size_t pos = orig.find(".busy");
+                        if (pos != std::string::npos) orig.erase(pos);
+                        fs::rename(p, orig); 
+                    } catch (...) {}
+                }
             }
         } else {
-            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            // Not enough parts, rename back what we claimed
+            for (const auto& p : parts_to_merge) {
+                try { 
+                    std::string orig = p;
+                    size_t pos = orig.find(".busy");
+                    if (pos != std::string::npos) orig.erase(pos);
+                    fs::rename(p, orig); 
+                } catch (...) {}
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1000));
         }
     }
 }
+
 
 LomoMergerDaemon* lomo_start_merger_daemon(const char* watch_dir, const char* output_dir) {
     LomoMergerDaemon* daemon = new LomoMergerDaemon();
@@ -152,11 +180,13 @@ LomoMergerDaemon* lomo_start_merger_daemon(const char* watch_dir, const char* ou
     daemon->watch_dir = watch_dir;
     daemon->output_dir = output_dir;
     
-    // Ensure output dir exists
     try { fs::create_directories(output_dir); } catch (...) {}
 
-    daemon->worker = std::jthread(lomo_merger_worker_loop, daemon);
-    printf("[LoMo Daemon] Merger daemon started. Watching: %s\n", watch_dir);
+    // Start 4 merger workers for the 4-2-4 split
+    for (int i = 0; i < 4; i++) {
+        daemon->workers.emplace_back(lomo_merger_worker_loop, daemon);
+    }
+    printf("[LoMo Daemon] Merger daemon started with 4 workers. Watching: %s\n", watch_dir);
     return daemon;
 }
 

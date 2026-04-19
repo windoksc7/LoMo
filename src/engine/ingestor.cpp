@@ -6,6 +6,7 @@
 #include <atomic>
 #include <thread>
 #include <vector>
+#include <algorithm>
 #ifdef _WIN32
 #include <direct.h>
 #endif
@@ -66,7 +67,11 @@ int lomo_ingest_row(LomoMemTable* mt, const void** column_data, const size_t* co
     if (!mt) return -1;
     std::mutex* m = (std::mutex*)mt->lock_handle;
     std::lock_guard<std::mutex> lock(*m);
+    return lomo_ingest_row_fast(mt, column_data, column_sizes);
+}
 
+int lomo_ingest_row_fast(LomoMemTable* mt, const void** column_data, const size_t* column_sizes) {
+    if (!mt) return -1;
     if (mt->row_count >= mt->max_rows) return -1;
 
     for (uint32_t i = 0; i < mt->column_count; i++) {
@@ -91,13 +96,11 @@ int lomo_ingest_row(LomoMemTable* mt, const void** column_data, const size_t* co
 int lomo_flush_memtable(LomoMemTable* mt, const char* directory_path) {
     if (!mt || mt->row_count == 0) return 0;
     
-    // Multi-threaded safety: caller ensures this mt isn't being modified.
     uint32_t* idxs = (uint32_t*)malloc(mt->row_count * 4);
     for (uint32_t i = 0; i < mt->row_count; i++) idxs[i] = i;
 
     g_ctx.ts = (const uint64_t*)mt->column_buffers[0];
     
-    // Optional: Secondary sort on first string column found
     g_ctx.symbols = NULL;
     g_ctx.sym_offsets = NULL;
     size_t* sym_offs = NULL;
@@ -117,17 +120,41 @@ int lomo_flush_memtable(LomoMemTable* mt, const char* directory_path) {
         g_ctx.sym_offsets = sym_offs;
     }
 
-    qsort(idxs, mt->row_count, 4, compare_multi);
+    bool already_sorted = true;
+    for (uint32_t i = 1; i < mt->row_count; i++) {
+        if (g_ctx.ts[i] < g_ctx.ts[i-1]) { already_sorted = false; break; }
+    }
+
+    if (!already_sorted) {
+        std::sort(idxs, idxs + mt->row_count, [](uint32_t ia, uint32_t ib) {
+            if (g_ctx.ts[ia] < g_ctx.ts[ib]) return true;
+            if (g_ctx.ts[ia] > g_ctx.ts[ib]) return false;
+
+            if (g_ctx.symbols && g_ctx.sym_offsets) {
+                const uint8_t* sa = g_ctx.symbols + g_ctx.sym_offsets[ia];
+                const uint8_t* sb = g_ctx.symbols + g_ctx.sym_offsets[ib];
+                uint64_t lena = *(uint64_t*)sa;
+                uint64_t lenb = *(uint64_t*)sb;
+                size_t min_len = (size_t)(lena < lenb ? lena : lenb);
+                int cmp = memcmp(sa + 8, sb + 8, min_len);
+                if (cmp != 0) return cmp < 0;
+                return lena < lenb;
+            }
+            return false;
+        });
+    }
 
     for (uint32_t i = 0; i < mt->column_count; i++) {
         void* sbuf = lomo_aligned_malloc(mt->column_capacities[i], 4096);
-        size_t wo = 0;
-        if (mt->types[i] == LOMO_TYPE_STRING) {
+        if (already_sorted) {
+            memcpy(sbuf, mt->column_buffers[i], mt->column_sizes[i]);
+        } else if (mt->types[i] == LOMO_TYPE_STRING) {
             size_t* o_offs = (size_t*)malloc(mt->row_count * sizeof(size_t));
             size_t sc = 0;
             for (uint32_t r = 0; r < mt->row_count; r++) {
                 o_offs[r] = sc; sc += (8 + *(uint64_t*)((uint8_t*)mt->column_buffers[i] + sc));
             }
+            size_t wo = 0;
             for (uint32_t j = 0; j < mt->row_count; j++) {
                 uint32_t oi = idxs[j]; size_t ln = 8 + *(uint64_t*)((uint8_t*)mt->column_buffers[i] + o_offs[oi]);
                 memcpy((uint8_t*)sbuf + wo, (uint8_t*)mt->column_buffers[i] + o_offs[oi], ln);
@@ -145,7 +172,7 @@ int lomo_flush_memtable(LomoMemTable* mt, const char* directory_path) {
     LomoPartHeader* p = lomo_init_part(mt->column_count); p->total_rows = mt->row_count;
     for (uint32_t i = 0; i < mt->column_count; i++) p->columns[i].type = mt->types[i];
     int res = lomo_flush_part(p, directory_path, mt->column_buffers, mt->column_sizes);
-    lomo_free_part(p); free(idxs); free(sym_offs);
+    lomo_free_part(p); free(idxs); if (sym_offs) free(sym_offs);
     return res;
 }
 
