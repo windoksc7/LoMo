@@ -73,6 +73,7 @@ include_directories(${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
 set(ENGINE_COMMON_SRC
     src/engine/storage_engine.cpp
     src/engine/simd_filter.cpp
+    src/engine/merger.cpp
     ${HAL_SRC}
 )
 
